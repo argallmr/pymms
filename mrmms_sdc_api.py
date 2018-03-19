@@ -1,11 +1,36 @@
-import os, requests
+import glob, os, requests
 import pdb # https://pythonconquerstheuniverse.wordpress.com/2009/09/10/debugging-in-python/
 from tqdm import tqdm
+import datetime as dt
+from pymms import mms_utils
 
 class MrMMS_SDC_API:
-    """Class to interface with the Science Data Center (SDC) API of the
+    """Interface with NASA's MMS SDC API
+    
+    Interface with the Science Data Center (SDC) API of the
     Magnetospheric Multiscale (MMS) mission.
-    https://lasp.colorado.edu/mms/sdc/public/"""
+    https://lasp.colorado.edu/mms/sdc/public/
+    
+    Params:
+        sc (str,list):       Spacecraft IDs ('mms1', 'mms2', 'mms3', 'mms4')
+        instr (str,list):    Instrument IDs
+        mode (str,list):     Data rate mode ('slow', 'fast', 'srvy', 'brst')
+        level (str,list):    Data quality level ('l1a', 'l1b', 'sitl', 'l2pre', 'l2', 'l3')
+        anc_product (str):   Name of an ancillary data product. Automatically sets
+                             `data_type='ancillary'`.
+        data_type (str):     Type of data ('ancillary', 'hk', 'science')
+        data_root (str):     Location where MMS directory structure begins
+        end_date (str):      End date of data interval, formatted as either %Y-%m-%d or
+                             %Y-%m-%dT%H:%M:%S.
+        files (str,list):    File names. If set, automatically sets `sc`, `instr`, `mode`,
+                             `level`, `optdesc` and `version` to None.
+        offline (bool):      Do not search for file information online.
+        optdesc (str,list):  Optional file name descriptor
+        site (str):          SDC site to use ('public', 'private')
+        start_date (str):    Start date of data interval, formatted as either %Y-%m-%d or
+                             %Y-%m-%dT%H:%M:%S.
+        version (str,list):  File version numbers.
+    """
     
     def __init__(self, sc=None, instr=None, mode=None, level=None,
                  anc_product=None,
@@ -13,6 +38,7 @@ class MrMMS_SDC_API:
                  data_root=None,
                  end_date=None,
                  files=None,
+                 offline=False,
                  optdesc=None,
                  site='public',
                  start_date=None,
@@ -26,6 +52,7 @@ class MrMMS_SDC_API:
         self.instr = instr
         self.level = level
         self.mode = mode
+        self.offline = offline
         self.optdesc = optdesc
         self.sc = sc
         self.site = site
@@ -39,39 +66,55 @@ class MrMMS_SDC_API:
             if not os.path.isdir(data_root):
                 os.makedirs(data_root, exist_ok=True)
         
-        self._data_root = data_root
+        self.data_root  = data_root
         self._sdc_home  = 'https://lasp.colorado.edu/mms/sdc'
         self._info_type = 'download'
     
-    def BuildQuery(self):
+    def __str__(self):
+        return self.url()
+    
+    # https://stackoverflow.com/questions/17576009/python-class-property-use-setter-but-evade-getter
+    def __setattr__(self, name, value):
+        """Control attribute values as they are set."""
+        
+        # TYPE OF INFO
+        #   - Unset other complementary options
+        #   - Ensure that at least one of (download | file_names | 
+        #     version_info | file_info) are true
+        if name == 'anc_product':
+            self.data_type = 'ancillary'
+        elif name == 'data_type':
+            if value not in ('ancillary', 'hk', 'science'):
+                raise ValueError('Invalid value for attribute "' + name + '".')
+        elif name == 'files':
+            if value is not None:
+                self.sc = None
+                self.instr = None
+                self.mode = None
+                self.level = None
+                self.optdesc = None
+                self.version = None
+        
+        # Set the value
+        super(MrMMS_SDC_API, self).__setattr__(name, value)
+    
+    
+    def url(self):
         """Build a URL to query the SDC."""
         sep = '/'
-        home = 'https://lasp.colorado.edu/mms/sdc'
-        url = sep.join( (home, self.site, 'files', 'api', 'v1', 
+        url = sep.join( (self._sdc_home, self.site, 'files', 'api', 'v1', 
                          self._info_type, self.data_type) )
         
         # Build query from parts of file names
         query = '?'
-        if self.sc is not None:
-            query += 'sc_id=' + self.sc + '&'
-        if self.instr is not None:
-            query += 'instrument_id=' + self.instr + '&'
-        if self.mode is not None:
-            query += 'data_rate_mode=' + self.mode + '&'
-        if self.level is not None:
-            query += 'data_level=' + self.level + '&'
-        if self.optdesc is not None:
-            query += 'descriptor=' + self.optdesc + '&'
-        if self.version is not None:
-            query += 'version=' + self.version + '&'
-        if self.start_date is not None:
-            query += 'start_date=' + self.start_date + '&'
-        if self.end_date is not None:
-            query += 'end_date=' + self.end_date + '&'
+        qdict = self.Query()
+        for key in qdict:
+            query += key + '=' + qdict[key] + '&'
         
         # Combine URL with query string
         url += query
         return url
+    
     
     def Download(self):
         self._info_type = 'download'
@@ -80,8 +123,21 @@ class MrMMS_SDC_API:
                         self._info_type, self.data_type))
         
         # Get available files
+        local_files, remote_files = self.Search()
+        
+        # Get information on the files that were found
+        #   - To do that, specify the specific files. This sets all other properties to None
+        #   - Save the state of the object as it currently is so that it can be restored
+        state = {}
+        state['sc'] = self.sc
+        state['instr'] = self.instr
+        state['mode'] = self.mode
+        state['level'] = self.level
+        state['optdesc'] = self.optdesc
+        state['version'] = self.version
+        state['files'] = self.files
+        self.files = [file.split('/')[-1] for file in remote_files]
         file_info = self.FileInfo()
-        local_files = []
         
         # Download each file individually
         for info in file_info['files']:
@@ -106,14 +162,19 @@ class MrMMS_SDC_API:
             except:
                 if os.path.isfile(file):
                     os.remove(file)
+                for key in state:
+                    self.files = None
+                    setattr(self, key, state[key])
                 raise
             
             local_files.append(file)
         
-        if len(local_files) == 1:
-            local_files = local_files[0]
+        for key in state:
+            self.files = None
+            setattr(self, key, state[key])
         
         return local_files
+    
     
     def FileInfo(self):
         """Obtain file information from the SDC."""
@@ -121,24 +182,71 @@ class MrMMS_SDC_API:
         response = self.Get()
         return response.json()
         
+    
     def FileNames(self):
         """Obtain file names from the SDC."""
         self._info_type = 'file_names'
         response = self.Get()
-        return response.text.split(',')
+        
+        if response.text == '':
+            files = []
+        else:
+            files = mms_utils.filter_time(response.text.split(','), 
+                                          self.start_date, self.end_date)
+        
+        return files
+    
     
     def Local_FileNames(self):
-        print('Finding local file names.')
-        from pymms import MrMMS_Construct_Filename, MrMMS_Filename2Path
+        """Search for MMS files on the local system.
         
-        tstart = self.start_date[0:4] + self.start_date[5:7] + self.start_date[8:10]
-        fnames = MrMMS_Construct_Filename(self.sc, self.instr, self.mode,
-                                          self.level, tstart,
-                                          optdesc=self.optdesc)
-        paths = MrMMS_Filename2Path(fnames, self._data_root)
+        Files must be located in an MMS-like directory structure.
+        """
         
-        return paths
+        # If no start or end date have been defined,
+        #   - Start at beginning of mission
+        #   - End at today's date
+        start_date = self._start_date
+        end_date = self._end_date
+        if self._start_date is None:
+            start_date = dt.datetime(2015, 9, 1)
+        if self._end_date is None:
+            end_date = dt.datetime.today()
         
+        # Create all dates between start_date and end_date
+        deltat = dt.timedelta(days=1)
+        dates  = []
+        while start_date <= end_date:
+            dates.append(start_date.strftime('%Y%m%d'))
+            start_date += deltat
+        
+        # Paths in which to look for files
+        #   - Files of all versions and times within interval
+        paths = mms_utils.construct_path(self.sc, self.instr, self.mode, self.level,
+                                         dates, optdesc=self.optdesc,
+                                         root=self.data_root, files=True)
+        
+        # Search
+        result = []
+        pwd = os.getcwd()
+        for path in paths:
+            root = os.path.dirname(path)
+            
+            try:
+                os.chdir(root)
+            except FileNotFoundError:
+                continue
+            except:
+                os.chdir(pwd)
+                raise
+                
+            for file in glob.glob(os.path.basename(path)):
+                result.append(os.path.join(root, file))
+
+        os.chdir(pwd)
+        
+        return result
+    
     
     def Get(self):
         """Retrieve data from the SDC."""
@@ -147,7 +255,8 @@ class MrMMS_SDC_API:
                         self._info_type, self.data_type))
         
         # Return the response for the requested URL
-        return requests.get(url, params=self.query)
+        return requests.get(url, params=self.Query())
+    
     
     def name2path(self, filename):
         """Convert remote file names to local file name.
@@ -167,22 +276,22 @@ class MrMMS_SDC_API:
         """
         parts = filename.split('_')
         
-        # Survey directories and file names are structured as:
-        #   - dirname:  sc/instr/mode/level[/optdesc]/YYYY/MM/
-        #   - basename: sc_instr_mode_level[_optdesc]_YYYYMMDD_vX.Y.Z.cdf
-        # Index from end to catch the optional descriptor, if it exists
-        if parts[2] == 'srvy':
-            path = os.path.join(self._data_root, *parts[0:-2],
-                                parts[-2][0:4], parts[-2][4:6], filename)
-        
         # Burst directories and file names are structured as:
         #   - dirname:  sc/instr/mode/level[/optdesc]/YYYY/MM/DD/
         #   - basename: sc_instr_mode_level[_optdesc]_YYYYMMDDhhmmss_vX.Y.Z.cdf
         # Index from end to catch the optional descriptor, if it exists
-        else:
-            path = os.path.join(self._data_root, *parts[0:-2],
+        if parts[2] == 'brst':
+            path = os.path.join(self.data_root, *parts[0:-2],
                                 parts[-2][0:4], parts[-2][4:6],
                                 parts[-2][6:8], filename)
+        
+        # Survey (slow,fast,srvy) directories and file names are structured as:
+        #   - dirname:  sc/instr/mode/level[/optdesc]/YYYY/MM/
+        #   - basename: sc_instr_mode_level[_optdesc]_YYYYMMDD_vX.Y.Z.cdf
+        # Index from end to catch the optional descriptor, if it exists
+        else:
+            path = os.path.join(self.data_root, *parts[0:-2],
+                                parts[-2][0:4], parts[-2][4:6], filename)
         return path
     
     def ParseFileNames(self, filename):
@@ -199,17 +308,14 @@ class MrMMS_SDC_API:
             tstart:   start time of file
             vX.Y.Z    file version, with X, Y, and Z version numbers
         
-        Params
-        ------
-        filename :  str
-                    An MMS file name
+        Params:
+        filename (str):  An MMS file name
         
-        Returns
-        -------
-        parts :  A tuples ordered as
-                 (sc, instr, mode, level, optdesc, tstart, version)
-                 If opdesc is not present in the file name, the output will
-                 contain the empty string ('').
+        Returns:
+        parts (tuple):  A tuples ordered as
+                        (sc, instr, mode, level, optdesc, tstart, version)
+                        If opdesc is not present in the file name, the output will
+                        contain the empty string ('').
         """
         parts = os.path.basename(filename).split('_')
         
@@ -222,6 +328,44 @@ class MrMMS_SDC_API:
         parts[-1] = parts[-1][0:-4]
         return tuple(parts)
     
+    
+    def Query(self):
+        
+        # Adjust end date
+        #   - The query takes '%Y-%m-%d' but the object allows '%Y-%m-%dT%H:%M:%S'
+        #   - Further, the query is half-exclusive: [start, end)
+        #   - If the dates are the same but the times are different, then files between
+        #     self.start_date and self.end_date will not be found
+        #   - In these circumstances, increase the end date by one day
+        end_date = self._end_date
+        if end_date is not None:
+            end_date = self._end_date.strftime('%Y-%m-%d')
+            if self._start_date.date() == self._end_date.date():
+                end_date = (self._end_date + dt.timedelta(1)).strftime('%Y-%m-%d')
+        
+        query = {}
+        if self.sc is not None:
+            query['sc_id'] = self.sc if isinstance(self.sc, str) else ','.join(self.sc)
+        if self.instr is not None:
+            query['instrument_id'] = self.instr if isinstance(self.instr, str) else ','.join(self.instr)
+        if self.mode is not None:
+            query['data_rate_mode'] = self.mode if isinstance(self.mode, str) else ','.join(self.mode)
+        if self.level is not None:
+            query['data_level'] = self.level if isinstance(self.level, str) else ','.join(self.level)
+        if self.optdesc is not None:
+            query['descriptor'] = self.optdesc if isinstance(self.optdesc, str) else ','.join(self.optdesc)
+        if self.version is not None:
+            query['version'] = self.version if isinstance(self.version, str) else ','.join(self.version)
+        if self.files is not None:
+            query['files'] = self.files if isinstance(self.files, str) else ','.join(self.files)
+        if self.start_date is not None:
+            query['start_date'] = self._start_date.strftime('%Y-%m-%d')
+        if self.end_date is not None:
+            query['end_date'] = end_date
+        
+        return query
+    
+    
     def remote2localnames(self, remote_names):
         """Convert remote file names to local file names.
         
@@ -229,22 +373,62 @@ class MrMMS_SDC_API:
         as in a web address.
         
         Parameters:
-        remote_names -- Remote file names returned by FileNames.
+        remote_names (list): Remote file names returned by FileNames.
         
         Returns:
-        local_names -- Equivalent local file name. This is the location to
-                       which local files are downloaded.
+        local_names (list):  Equivalent local file name. This is the location to
+                             which local files are downloaded.
         """
         # os.path.join() requires string arguments, but str.split() return list.
         #   - Unpack with *: https://docs.python.org/2/tutorial/controlflow.html#unpacking-argument-lists
         local_names =list()
         for file in remote_names:
-            local_names.append(os.path.join(self._data_root, *file.split('/')[2:]))
+            local_names.append(os.path.join(self.data_root, *file.split('/')[2:]))
         
         if (len(remote_names) == 1) & (type(remote_names) == 'str'):
             local_names = local_names[0]
         
         return local_names
+    
+    
+    def Search(self):
+        """Search for files locally and at the SDC.
+        
+        TODO:
+            Filter results in self.Local_FileNames() by time and remove the time
+            filters here. self.FileNames() already filters by time.
+        
+        Returns:
+        files (tuple):  Local and remote files within the interval, returned as
+                        (local, remote), where `local` and `remote` are lists.
+        """
+        
+        # Search locally if offline
+        if self.offline:
+            local_files = self.Local_FileNames
+        
+        # Search remote first
+        #   - SDC is definitive source of files
+        #   - Returns most recent version
+        else:
+            remote_files = self.FileNames()
+            
+            # Search for the equivalent local file names
+            local_files = self.remote2localnames(remote_files)
+            idx = [i for i, local in enumerate(local_files) if os.path.isfile(local)]
+            
+            # Filter based on location
+            local_files = [local_files[i] for i in idx]
+            remote_files = [remote_files[i] for i in range(len(remote_files)) if i not in idx]
+        
+        # Filter based on time interval
+        if len(local_files) > 0:
+            local_files = mms_utils.filter_time(local_files, self.start_date, self.end_date)
+        if len(remote_files) > 0:
+            remote_files = mms_utils.filter_time(remote_files, self.start_date, self.end_date)
+        
+        return (local_files, remote_files)
+    
     
     def VersionInfo(self):
         """Obtain version information from the SDC."""
@@ -252,21 +436,6 @@ class MrMMS_SDC_API:
         response = self.Get()
         return response.json()
     
-    # https://stackoverflow.com/questions/17576009/python-class-property-use-setter-but-evade-getter
-    def __setattr__(self, name, value):
-        
-        # TYPE OF INFO
-        #   - Unset other complementary options
-        #   - Ensure that at least one of (download | file_names | 
-        #     version_info | file_info) are true
-        if name == 'anc_product':
-            self.data_type = 'ancillary'
-        elif name == 'data_type':
-            if value not in ('ancillary', 'hk', 'science'):
-                raise ValueError('Invalid value for attribute "' + name + '".')
-        
-        # Set the value
-        super(MrMMS_SDC_API, self).__setattr__(name, value)
     
     @property
     def site(self):
@@ -282,13 +451,38 @@ class MrMMS_SDC_API:
             raise ValueError('Invalid value for the "site" attribute')
     
     @property
-    def query(self):
-        query = {'sc_id': self.sc,
-                 'instrument_id': self.instr,
-                 'data_rate_mode': self.mode,
-                 'data_level': self.level,
-                 'descriptor': self.optdesc,
-                 'version': self.version,
-                 'start_date': self.start_date,
-                 'end_date': self.end_date}
-        return query
+    def start_date(self):
+        return self._start_date.isoformat()
+    
+    @start_date.setter
+    def start_date(self, value):
+        # Convert string to datetime object
+        if isinstance(value, str):
+            try:
+                value = dt.datetime.strptime(value, '%Y-%m-%dT%H:%M:%S')
+            except:
+                try:
+                    value = dt.datetime.strptime(value, '%Y-%m-%d')
+                except:
+                    ValueError('Invalid format for attribute start_date.')
+        
+        self._start_date = value
+    
+    
+    @property
+    def end_date(self):
+        return self._end_date.isoformat()
+    
+    @end_date.setter
+    def end_date(self, value):
+        # Convert string to datetime object
+        if isinstance(value, str):
+            try:
+                value = dt.datetime.strptime(value, '%Y-%m-%dT%H:%M:%S')
+            except:
+                try:
+                    value = dt.datetime.strptime(value, '%Y-%m-%d')
+                except:
+                    ValueError('Invalid format for attribute start_date.')
+        
+        self._end_date = value
