@@ -26,7 +26,9 @@ class MrMMS_SDC_API:
                              `level`, `optdesc` and `version` to None.
         offline (bool):      Do not search for file information online.
         optdesc (str,list):  Optional file name descriptor
-        site (str):          SDC site to use ('public', 'private')
+        site (str):          SDC site to use ('public', 'private'). Setting `level`
+                             automatically sets `site`. If `level` is 'l2' or 'l3', then
+                             `site`='public' otherwise `site`='private'.
         start_date (str):    Start date of data interval, formatted as either %Y-%m-%d or
                              %Y-%m-%dT%H:%M:%S.
         version (str,list):  File version numbers.
@@ -45,19 +47,23 @@ class MrMMS_SDC_API:
                  version=None):
         
         # Set attributes
+        #   - Put site before level because level will auto-set site
+        #   - Put files last because it will reset most fields
+        self.site = site
+        
         self.anc_product = anc_product
         self.data_type = data_type
         self.end_date = end_date
-        self.files = files
         self.instr = instr
         self.level = level
         self.mode = mode
         self.offline = offline
         self.optdesc = optdesc
         self.sc = sc
-        self.site = site
         self.start_date = start_date
         self.version = version
+        
+        self.files = files
         
         # Setup download directory
         #   - $HOME/data/mms/
@@ -94,6 +100,11 @@ class MrMMS_SDC_API:
                 self.level = None
                 self.optdesc = None
                 self.version = None
+        elif name == 'level':
+            if value in [None, 'l2', 'l3']:
+                self.site = 'public'
+            else:
+                self.site = 'private'
         
         # Set the value
         super(MrMMS_SDC_API, self).__setattr__(name, value)
@@ -115,6 +126,18 @@ class MrMMS_SDC_API:
         url += query
         return url
     
+    def check_response(self, response):
+        
+        if response.code == 400:
+            # Everything is OK
+            a = None
+        
+        elif response.code == 401:
+            print('Log-in Required')
+        
+        else:
+            RuntimeError(response.reason)
+            
     
     def Download(self):
         self._info_type = 'download'
@@ -149,9 +172,9 @@ class MrMMS_SDC_API:
             # downloading: https://stackoverflow.com/questions/16694907/how-to-download-large-file-in-python-with-requests-py
             # progress bar: https://stackoverflow.com/questions/37573483/progress-bar-while-download-file-over-http-with-requests
             try:
-                r = requests.get(url,
-                                 params={'file': info['file_name']}, 
-                                 stream=True)
+                r = requests.post(url,
+                                  params={'file': info['file_name']}, 
+                                  stream=True)
                 with open(file, 'wb') as f:
                     for chunk in tqdm(r.iter_content(chunk_size=1024),
                                       total=info['file_size']/1024,
@@ -187,6 +210,8 @@ class MrMMS_SDC_API:
         """Obtain file names from the SDC."""
         self._info_type = 'file_names'
         response = self.Get()
+        
+        pdb.set_trace()
         
         if response.text == '':
             files = []
@@ -254,8 +279,12 @@ class MrMMS_SDC_API:
         url = '/'.join((self._sdc_home, self.site, 'files', 'api', 'v1',
                         self._info_type, self.data_type))
         
+        # Check on query
+        response = requests.post(url, params=self.Query())
+        self.check_response(response)
+        
         # Return the response for the requested URL
-        return requests.get(url, params=self.Query())
+        return response
     
     
     def name2path(self, filename):
@@ -443,7 +472,7 @@ class MrMMS_SDC_API:
     
     @site.setter
     def site(self, value):
-        if (value == 'team') | (value == 'team_site') | (value == 'sitl'):
+        if (value == 'team') | (value == 'team_site') | (value == 'sitl') | (value == 'private'):
             self._site = 'sitl'
         elif (value == 'public') | (value == 'public_site'):
             self._site = 'public'
