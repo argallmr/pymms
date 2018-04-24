@@ -2,7 +2,8 @@ import glob, os, requests
 import pdb # https://pythonconquerstheuniverse.wordpress.com/2009/09/10/debugging-in-python/
 from tqdm import tqdm
 import datetime as dt
-from pymms import mms_utils
+from urllib.parse import parse_qs
+from pymms import mms_utils, sdc_login
 
 class MrMMS_SDC_API:
     """Interface with NASA's MMS SDC API
@@ -38,8 +39,10 @@ class MrMMS_SDC_API:
                  anc_product=None,
                  data_type='science',
                  data_root=None,
+                 dropbox_root=None,
                  end_date=None,
                  files=None,
+                 mirror_root=None,
                  offline=False,
                  optdesc=None,
                  site='public',
@@ -53,9 +56,11 @@ class MrMMS_SDC_API:
         
         self.anc_product = anc_product
         self.data_type = data_type
+        self.dropbox_root = dropbox_root
         self.end_date = end_date
         self.instr = instr
         self.level = level
+        self.mirror_root = mirror_root
         self.mode = mode
         self.offline = offline
         self.optdesc = optdesc
@@ -75,6 +80,9 @@ class MrMMS_SDC_API:
         self.data_root  = data_root
         self._sdc_home  = 'https://lasp.colorado.edu/mms/sdc'
         self._info_type = 'download'
+        
+        # Create a persistent session
+        self._session = requests.Session()
     
     def __str__(self):
         return self.url()
@@ -126,18 +134,56 @@ class MrMMS_SDC_API:
         url += query
         return url
     
+    
     def check_response(self, response):
+        '''Check the status code for a requests response and perform
+           and appropriate action (e.g. log-in, raise error, etc.)
         
-        if response.code == 400:
-            # Everything is OK
-            a = None
+        Parameters:
+        -----------
+        response (object):      A requests response object
+        '''
         
-        elif response.code == 401:
+        # OK
+        if response.status_code == 200:
+            r = response
+        
+        # Authentication required
+        elif response.status_code == 401:
             print('Log-in Required')
+            
+            maxAttempts = 3
+            nAttempts = 1
+            while nAttempts <= maxAttempts:
+                # Save log-in credentials and request again
+                self.login()
+                
+                # Remake the request
+                #   - Ideally, self._session.send(response.request)
+                #   - However, the prepared request lacks the authentication data
+                if response.request.method == 'POST':
+                    query = parse_qs(response.request.body)
+                    r = self._session.post(response.request.url, data=query)
+                else:
+                    r = self._session.get(response.request.url)
+                
+                # Another attempt
+                if r.ok:
+                    break
+                else:
+                    Print('Incorrect username or password. %d tries remaining.' % maxAttempts-nAttemps)
+                    nAttempts += 1
+            
+            # Failed log-in
+            if nAttempts > maxAttempts:
+                raise ConnectionError('Failed log-in.')
         
         else:
-            RuntimeError(response.reason)
-            
+            raise ConnectionError(r.reason)
+        
+        # Return the resulting request
+        return r
+    
     
     def Download(self):
         self._info_type = 'download'
@@ -172,9 +218,9 @@ class MrMMS_SDC_API:
             # downloading: https://stackoverflow.com/questions/16694907/how-to-download-large-file-in-python-with-requests-py
             # progress bar: https://stackoverflow.com/questions/37573483/progress-bar-while-download-file-over-http-with-requests
             try:
-                r = requests.post(url,
-                                  params={'file': info['file_name']}, 
-                                  stream=True)
+                r = self._session.post(url,
+                                       params={'file': info['file_name']}, 
+                                       stream=True)
                 with open(file, 'wb') as f:
                     for chunk in tqdm(r.iter_content(chunk_size=1024),
                                       total=info['file_size']/1024,
@@ -211,8 +257,6 @@ class MrMMS_SDC_API:
         self._info_type = 'file_names'
         response = self.Get()
         
-        pdb.set_trace()
-        
         if response.text == '':
             files = []
         else:
@@ -222,11 +266,17 @@ class MrMMS_SDC_API:
         return files
     
     
-    def Local_FileNames(self):
+    def Local_FileNames(self, mirror=False):
         """Search for MMS files on the local system.
         
         Files must be located in an MMS-like directory structure.
         """
+        
+        # Search the mirror or local directory
+        if mirror:
+            data_root = self.data_root
+        else:
+            data_root = self.mirror_root
         
         # If no start or end date have been defined,
         #   - Start at beginning of mission
@@ -244,12 +294,12 @@ class MrMMS_SDC_API:
         while start_date <= end_date:
             dates.append(start_date.strftime('%Y%m%d'))
             start_date += deltat
-        
+            
         # Paths in which to look for files
         #   - Files of all versions and times within interval
         paths = mms_utils.construct_path(self.sc, self.instr, self.mode, self.level,
                                          dates, optdesc=self.optdesc,
-                                         root=self.data_root, files=True)
+                                         root=data_root, files=True)
         
         # Search
         result = []
@@ -273,18 +323,41 @@ class MrMMS_SDC_API:
         return result
     
     
+    def login(self, username=None, password=None):
+        """Log-In to the SDC
+        
+        Parameters
+        ----------
+        username (str):     Account username
+        password (str):     Account password
+        """
+        
+        # Ask for inputs
+        if username is None:
+            username = input('username: ')
+        if password is None:
+            password = input('password: ')
+        
+        # Save credentials
+        self._session.auth = (username, password)
+    
+    
     def Get(self):
-        """Retrieve data from the SDC."""
+        """Retrieve data from the SDC.
+        """
         # Build the URL sans query
         url = '/'.join((self._sdc_home, self.site, 'files', 'api', 'v1',
                         self._info_type, self.data_type))
         
         # Check on query
-        response = requests.post(url, params=self.Query())
-        self.check_response(response)
+        r = self._session.post(url, data=self.Query())
+        
+        # Check if everything is ok
+        if not r.ok:
+            r = self.check_response(r)
         
         # Return the response for the requested URL
-        return response
+        return r
     
     
     def name2path(self, filename):
@@ -321,6 +394,7 @@ class MrMMS_SDC_API:
         else:
             path = os.path.join(self.data_root, *parts[0:-2],
                                 parts[-2][0:4], parts[-2][4:6], filename)
+        
         return path
     
     def ParseFileNames(self, filename):
@@ -515,3 +589,37 @@ class MrMMS_SDC_API:
                     ValueError('Invalid format for attribute start_date.')
         
         self._end_date = value
+
+
+if __name__ == '__main__':
+    '''Download data'''
+    
+    # Inputs common to each calling sequence
+    sc = sys.argv[0]
+    instr = sys.argv[1]
+    mode = sys.argv[2]
+    level = sys.argv[3]
+    
+    # Basic dataset
+    if len(sys.argv) == 7:
+        optdesc = None
+        start_date = sys.argv[4]
+        end_date = sys.argv[5]
+    
+    # Optional descriptor given
+    elif len(sys.argv) == 8:
+        optdesc = sys.argv[4]
+        start_date = sys.argv[5]
+        end_date = sys.argv[6]
+    
+    # Error
+    else:
+        raise TypeError('Incorrect number if inputs.')
+    
+    # Create the request
+    api = MrMMS_SDC_API(sc, instr, mode, level, 
+                        optdesc=optdesc, start_date=start_date, end_date=end_date)
+    
+    # Download the data
+    files = api.Download()
+    
