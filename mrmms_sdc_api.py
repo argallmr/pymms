@@ -208,6 +208,9 @@ class MrMMS_SDC_API:
         self.files = [file.split('/')[-1] for file in remote_files]
         file_info = self.FileInfo()
         
+        # Amount to download per iteration
+        block_size = 1024*128
+        
         # Download each file individually
         for info in file_info['files']:
             # Create the destination directory
@@ -219,15 +222,14 @@ class MrMMS_SDC_API:
             # progress bar: https://stackoverflow.com/questions/37573483/progress-bar-while-download-file-over-http-with-requests
             try:
                 r = self._session.post(url,
-                                       params={'file': info['file_name']}, 
+                                       data={'file': info['file_name']}, 
                                        stream=True)
-                with open(file, 'wb') as f:
-                    for chunk in tqdm(r.iter_content(chunk_size=1024),
-                                      total=info['file_size']/1024,
-                                      unit='k',
-                                      unit_scale=True):
-                        if chunk: # filter out keep-alive new chunks
-                            f.write(chunk)
+                with tqdm(total=info['file_size'], unit='B', unit_scale=True, unit_divisor=1024) as pbar:
+                    with open(file, 'wb') as f:
+                        for chunk in r.iter_content(chunk_size=block_size):
+                            if chunk: # filter out keep-alive new chunks
+                                f.write(chunk)
+                                pbar.update(block_size)
             except:
                 if os.path.isfile(file):
                     os.remove(file)
@@ -274,9 +276,9 @@ class MrMMS_SDC_API:
         
         # Search the mirror or local directory
         if mirror:
-            data_root = self.data_root
-        else:
             data_root = self.mirror_root
+        else:
+            data_root = self.data_root
         
         # If no start or end date have been defined,
         #   - Start at beginning of mission
@@ -294,7 +296,7 @@ class MrMMS_SDC_API:
         while start_date <= end_date:
             dates.append(start_date.strftime('%Y%m%d'))
             start_date += deltat
-            
+        
         # Paths in which to look for files
         #   - Files of all versions and times within interval
         paths = mms_utils.construct_path(self.sc, self.instr, self.mode, self.level,
@@ -443,7 +445,7 @@ class MrMMS_SDC_API:
         end_date = self._end_date
         if end_date is not None:
             end_date = self._end_date.strftime('%Y-%m-%d')
-            if self._start_date.date() == self._end_date.date():
+            if self._start_date.date() == self._end_date.date() or self._end_date.time() != dt.time(0,0,0):
                 end_date = (self._end_date + dt.timedelta(1)).strftime('%Y-%m-%d')
         
         query = {}

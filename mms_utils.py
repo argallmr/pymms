@@ -247,6 +247,8 @@ def filter_time(fnames, start_date, end_date):
     
     # Output
     files = fnames
+    if type(files) is str:
+        files = [files]
     
     # Convert date range to datetime objects
     start_date = dt.datetime.strptime(start_date, '%Y-%m-%dT%H:%M:%S')
@@ -254,20 +256,20 @@ def filter_time(fnames, start_date, end_date):
     
     # Parse the time out of the file name
     parts = parse_filename(fnames)
-    tstart = [dt.datetime.strptime(name[-2], '%Y%m%d') if len(name[-2]) == 8 else
+    fstart = [dt.datetime.strptime(name[-2], '%Y%m%d') if len(name[-2]) == 8 else
               dt.datetime.strptime(name[-2], '%Y%m%d%H%M%S')
               for name in parts]
     
     # Sor the files by start time
-    isort = sorted(range(len(tstart)), key=lambda k: tstart[k])
-    tstart = [tstart[i] for i in isort]
+    isort = sorted(range(len(fstart)), key=lambda k: fstart[k])
+    fstart = [fstart[i] for i in isort]
     files = [files[i] for i in isort]
     
     # End time
     #   - Any files that start on or before END_DATE can be kept
-    idx = [i for i, t in enumerate(tstart) if t <= end_date ]
+    idx = [i for i, t in enumerate(fstart) if t <= end_date ]
     if len(idx) > 0:
-        tstart = [tstart[i] for i in idx]
+        fstart = [fstart[i] for i in idx]
         files = [files[i] for i in idx]
     else:
         tstart = []
@@ -278,17 +280,10 @@ def filter_time(fnames, start_date, end_date):
     #   - Assume the start time of one file marks the end time of the previous file.
     #   - With this, we look for the file that begins just prior to START_DATE and
     #     throw away any files that start before it.
-    tstart = [t for t in tstart if t.date() <= start_date.date()]
-    if len(tstart) == 0:
-        files = []
-    else:
-        idx = [i for i, t in enumerate(tstart) if t.date() >= tstart[-1].date()]
-        if len(idx) > 0:
-            tstart = [tstart[i] for i in idx]
-            files = [files[i] for i in idx]
-        else:
-            tstart = []
-            files = []
+    idx = [i for i, t in enumerate(fstart) if t.date() <= start_date.date()]
+    if len(idx) > 0:
+        fstart = fstart[idx[-1]:]
+        files = files[idx[-1]:]
     
     # The last caveat:
     #   - Our filter may be too lenient. The first file may or may not contain
@@ -297,13 +292,13 @@ def filter_time(fnames, start_date, end_date):
     #   - There may be many files with the same start time, but different
     #     version numbers. Make sure we get all copies OF the first start
     #     time.
-    if (len(tstart) > 0) and (tstart[0].date() != start_date.date()):
-        idx = [i for i, t in enumerate(tstart) if t.date() != tstart[0].date()]
+    if (len(fstart) > 0) and (fstart[0].date() < start_date.date()):
+        idx = [i for i, t in enumerate(fstart) if t.date() != fstart[0].date()]
         if len(idx) > 0:
-            tstart = [tstart[i] for i in idx]
+            fstart = [fstart[i] for i in idx]
             files = [files[i] for i in idx]
         else:
-            tstart = []
+            fstart = []
             files = []
         
     return files
@@ -448,3 +443,34 @@ def parse_time(times):
     parts = [(time[0:4], time[4:6], time[6:8], time[8:10], time[10:12], time[12:14]) for time in times]
     
     return parts
+
+
+def sort_files(files):
+    """
+    Sort MMS file names by data product and time.
+    
+    Arguments:
+        files (str,list):   Files to be sorted
+    
+    Returns:
+        sorted (tuple):     Sorted file names. Each tuple element corresponds to
+                            a unique data product.
+    """
+    
+    # File types and start times
+    parts = parse_filename(files)
+    bases = ['_'.join(p[0:5]) for p in parts]
+    tstart = [p[-2] for p in parts]
+    
+    # Sort everything
+    idx = sorted(range(len(tstart)), key=lambda k: tstart[k])
+    bases = [bases[i] for i in idx]
+    files = [files[i] for i in idx]
+    
+    # Find unique file types
+    fsort = []
+    uniq_bases = list(set(bases))
+    for ub in uniq_bases:
+        fsort.append([files[i] for i, b in enumerate(bases) if b == ub])
+        
+    return tuple(fsort)
