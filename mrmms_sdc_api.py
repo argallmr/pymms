@@ -197,6 +197,8 @@ class MrMMS_SDC_API:
         # Get information on the files that were found
         #   - To do that, specify the specific files. This sets all other properties to None
         #   - Save the state of the object as it currently is so that it can be restored
+        #   - Setting FILES will indirectly cause SITE='public'. Keep track of SITE.
+        site = self.site
         state = {}
         state['sc'] = self.sc
         state['instr'] = self.instr
@@ -206,6 +208,8 @@ class MrMMS_SDC_API:
         state['version'] = self.version
         state['files'] = self.files
         self.files = [file.split('/')[-1] for file in remote_files]
+        
+        self.site = site
         file_info = self.FileInfo()
         
         # Amount to download per iteration
@@ -262,7 +266,7 @@ class MrMMS_SDC_API:
         if response.text == '':
             files = []
         else:
-            files = mms_utils.filter_time(response.text.split(','), 
+            files = mms_utils.filter_time(response.text.split(','),
                                           self.start_date, self.end_date)
         
         return files
@@ -557,7 +561,12 @@ class MrMMS_SDC_API:
     
     @property
     def start_date(self):
-        return self._start_date.isoformat()
+        if type(self._start_date) is dt.datetime:
+            theDate = self._start_date.isoformat()
+        else:
+            theDate = self._start_date
+        
+        return theDate
     
     @start_date.setter
     def start_date(self, value):
@@ -576,7 +585,12 @@ class MrMMS_SDC_API:
     
     @property
     def end_date(self):
-        return self._end_date.isoformat()
+        if type(self._end_date) is dt.datetime:
+            theDate = self._end_date.isoformat()
+        else:
+            theDate = self._end_date
+        
+        return theDate
     
     @end_date.setter
     def end_date(self, value):
