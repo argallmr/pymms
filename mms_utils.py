@@ -280,7 +280,7 @@ def filter_time(fnames, start_date, end_date):
     #   - Assume the start time of one file marks the end time of the previous file.
     #   - With this, we look for the file that begins just prior to START_DATE and
     #     throw away any files that start before it.
-    idx = [i for i, t in enumerate(fstart) if t.date() <= start_date.date()]
+    idx = [i for i, t in enumerate(fstart) if t.date() < start_date.date()]
     if len(idx) > 0:
         fstart = fstart[idx[-1]:]
         files = files[idx[-1]:]
