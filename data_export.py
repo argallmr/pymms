@@ -516,67 +516,67 @@ des_data = pd.DataFrame(des_data, columns=des_data.keys())
 
 ## EDI
 
-# Update instrument-specific variables
-edi_instr = 'edi'
-edi_mode = 'srvy'
-edi_optdesc = None   # Get whatever is available
-
-if level == 'sitl':
-    edi_level = 'ql'
-else:
-    edi_level = level
-
-# Set attributes
-sdc.instr = edi_instr
-sdc.mode = edi_mode
-sdc.level = edi_level
-sdc.optdesc = edi_optdesc
-
-# Figure out which data product is available
-files = sdc.FileNames()
-parts = mms_utils.parse_filename(files)
-edi_optdesc = [p[4] for p in parts]
-
-# EDI variable names
-cts1_0_vname = '_'.join((sc, 'edi', 'counts1', '0'))
-cts1_180_vname = '_'.join((sc, 'edi', 'counts1', '180'))
-
-# Open the file
-files = sdc.Download()
-files = mms_utils.sort_files(files)[0]
-
-# Read the data
-edi_t = []
-edi_cts1_0 = []
-edi_cts1_180 = []
-print('EDI Files:')
-for file in files:
-    # Open the file
-    cdf = pycdf.CDF(file)
-        
-    # Read the data
-    edi_t += list(cdf[cdf[cts1_0_vname].attrs['DEPEND_0']][:])
-    edi_cts1_0 += list(cdf[cts1_0_vname][:])
-    edi_cts1_180 += list(cdf[cts1_180_vname][:])
-
-    # Close the file
-    cdf.close()
-    print('  ' + file)
-
-# Convert back to numpy arrays
-edi_t = np.array(edi_t)
-edi_cts1_0 = np.array(edi_cts1_0)
-edi_cts1_180 = np.array(edi_cts1_180)
-
-
-#TODO: This is disabled for now, because the data is not a scalar
-
-# Create a dictionary
-edi_data = {
-    'Time' : edi_t,
-    'cts1_0' : edi_cts1_0,
-    'cts1_180' : edi_cts1_180
-}
+# # Update instrument-specific variables
+# edi_instr = 'edi'
+# edi_mode = 'srvy'
+# edi_optdesc = None   # Get whatever is available
+# 
+# if level == 'sitl':
+#     edi_level = 'ql'
+# else:
+#     edi_level = level
+# 
+# # Set attributes
+# sdc.instr = edi_instr
+# sdc.mode = edi_mode
+# sdc.level = edi_level
+# sdc.optdesc = edi_optdesc
+# 
+# # Figure out which data product is available
+# files = sdc.FileNames()
+# parts = mms_utils.parse_filename(files)
+# edi_optdesc = [p[4] for p in parts]
+# 
+# # EDI variable names
+# cts1_0_vname = '_'.join((sc, 'edi', 'counts1', '0'))
+# cts1_180_vname = '_'.join((sc, 'edi', 'counts1', '180'))
+# 
+# # Open the file
+# files = sdc.Download()
+# files = mms_utils.sort_files(files)[0]
+# 
+# # Read the data
+# edi_t = []
+# edi_cts1_0 = []
+# edi_cts1_180 = []
+# print('EDI Files:')
+# for file in files:
+#     # Open the file
+#     cdf = pycdf.CDF(file)
+#         
+#     # Read the data
+#     edi_t += list(cdf[cdf[cts1_0_vname].attrs['DEPEND_0']][:])
+#     edi_cts1_0 += list(cdf[cts1_0_vname][:])
+#     edi_cts1_180 += list(cdf[cts1_180_vname][:])
+# 
+#     # Close the file
+#     cdf.close()
+#     print('  ' + file)
+# 
+# # Convert back to numpy arrays
+# edi_t = np.array(edi_t)
+# edi_cts1_0 = np.array(edi_cts1_0)
+# edi_cts1_180 = np.array(edi_cts1_180)
+# 
+# 
+# #TODO: This is disabled for now, because the data is not a scalar
+# 
+# # Create a dictionary
+# edi_data = {
+#     'Time' : edi_t,
+#     'cts1_0' : edi_cts1_0,
+#     'cts1_180' : edi_cts1_180
+# }
 
 # Convert dictionary to data from
 #print(type(edi_data))
