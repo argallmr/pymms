@@ -3,7 +3,7 @@ import pdb # https://pythonconquerstheuniverse.wordpress.com/2009/09/10/debuggin
 from tqdm import tqdm
 import datetime as dt
 from urllib.parse import parse_qs
-from pymms import mms_utils, sdc_login
+from . import mms_utils, sdc_login
 
 class MrMMS_SDC_API:
     """Interface with NASA's MMS SDC API
