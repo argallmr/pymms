@@ -8,18 +8,18 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import os.path
 import pymms
-from pymms.pymms import mms_utils
+from pymms import mms_utils
 import pdb
 
 ## Creating the pymms object
-# First, we create an instance of the object that communicates with the SDC. For the sake of this 
-# example, we will start with data from `2015-10-16` because there are several magnetopause crossings 
-# and a well-studied electron diffusion region event. Also, for simplicity we will work with data from 
-# the MMS1 spacecraft. Data from other spacecraft can be loaded by changing the `sc` property 
+# First, we create an instance of the object that communicates with the SDC. For the sake of this
+# example, we will start with data from `2015-10-16` because there are several magnetopause crossings
+# and a well-studied electron diffusion region event. Also, for simplicity we will work with data from
+# the MMS1 spacecraft. Data from other spacecraft can be loaded by changing the `sc` property
 # below to `'mms2'`, `'mms3'`, or `'mms4'`.
 
 # Create an instance of SDC object
-sdc = pymms.pymms.MrMMS_SDC_API()
+sdc = pymms.MrMMS_SDC_API()
 
 # Define the spacecraft. We will use the variable later when accessing the CDF files.
 sc = 'mms1'
@@ -27,7 +27,7 @@ sc = 'mms1'
 level = "l2"
 start_date = '2015-12-06'
 end_date = '2015-12-06T23:59:59'
-data_root = os.path.expanduser('~/data/mms/') 
+data_root = os.path.expanduser('~/data/mms/')
         # Specifying data_root="~/" does not expand the tilde yet
         # However, if data_root=None, then ~/data is the default
 
@@ -38,17 +38,17 @@ sdc.end_date = end_date
 sdc.data_root = data_root
 
 ## Working with CDF Files
-# CDF files are somewhat like netCDF or HDF5 files in that the contain data as well as metadata. 
-# Data is associated with variable names and variable metadata, or variable attributes. The file itself 
-# has metadata in the form of global attributes. For our purpose, we are interested in determining the 
-# variable names, what they mean, then selecting the subset of variables that are relevant to us. To do that, 
+# CDF files are somewhat like netCDF or HDF5 files in that the contain data as well as metadata.
+# Data is associated with variable names and variable metadata, or variable attributes. The file itself
+# has metadata in the form of global attributes. For our purpose, we are interested in determining the
+# variable names, what they mean, then selecting the subset of variables that are relevant to us. To do that,
 # we will need to download an MMS CDF data file and make use of pycdf from the spacepy package.
 
 # Downloading an MMS CDF File
-# Here, we will give a brief example of how to download a CDF file using the `pymms` package. We pick a 
-# file from the fluxgate magnetometer (FGM) team containing magnetic field data. For demonstration purposes, 
-# we select a science-quality data file (`level='l2'`) when the instrument was sampling in survey 
-# mode (`mode='srvy'`). [Since the Geocentric Solar Ecliptic](https://sscweb.gsfc.nasa.gov/users_guide/Appendix_C.html) 
+# Here, we will give a brief example of how to download a CDF file using the `pymms` package. We pick a
+# file from the fluxgate magnetometer (FGM) team containing magnetic field data. For demonstration purposes,
+# we select a science-quality data file (`level='l2'`) when the instrument was sampling in survey
+# mode (`mode='srvy'`). [Since the Geocentric Solar Ecliptic](https://sscweb.gsfc.nasa.gov/users_guide/Appendix_C.html)
 # (GSE) coordinate system is the standard for MMS data, we will extract non-scalar data in this system.
 
 
@@ -70,18 +70,18 @@ print(*files, sep='\n')
 
 ## CDF Attributes and Variables
 
-# In order to access data in a CDF file, it is necessary to know the names of the variables contained within. Often, 
-# it is also important to know additional information about the file contents or variable data. This metadata 
+# In order to access data in a CDF file, it is necessary to know the names of the variables contained within. Often,
+# it is also important to know additional information about the file contents or variable data. This metadata
 # is contained in the global and variable attributes.
-# The most important variable attributes are CATDESC, which describes the variable, FILLVAL, which gives the 
-# value used for bad or missing data, and DEPEND_[0-3], which list the dependent variables of a data variable. 
-# Typically, the dimensions of CDF variables are ordered as [nRecs, nDep1, nDep2, nDep3], where nRecs is the total 
-# number of records, each record having dimensions [nDep1, nDep2, nDep3]. The value of DEPEND_0 is typically 'Epoch', 
-# indicating that the CDF variable 'Epoch' is a dependency. The 'Epoch' variable contains a CDF Epoch time stamp at 
-# each of the nRecs number of records. Similarly DEPEND_[1-3] variables point to other variables in the CDF file 
+# The most important variable attributes are CATDESC, which describes the variable, FILLVAL, which gives the
+# value used for bad or missing data, and DEPEND_[0-3], which list the dependent variables of a data variable.
+# Typically, the dimensions of CDF variables are ordered as [nRecs, nDep1, nDep2, nDep3], where nRecs is the total
+# number of records, each record having dimensions [nDep1, nDep2, nDep3]. The value of DEPEND_0 is typically 'Epoch',
+# indicating that the CDF variable 'Epoch' is a dependency. The 'Epoch' variable contains a CDF Epoch time stamp at
+# each of the nRecs number of records. Similarly DEPEND_[1-3] variables point to other variables in the CDF file
 # that act as dependencies. If you want to plot a variable, you will need to also extract its 'DEPEND_0' variables.
 
-# Variables and attributes are described in more detail in the ISTP CDF Guidelines. Below, we demonstrate 
+# Variables and attributes are described in more detail in the ISTP CDF Guidelines. Below, we demonstrate
 # how to obtain attribute and variable names and values.
 
 
@@ -114,16 +114,16 @@ print('\t', 'DEPEND_0: ', cdf[vname].attrs['DEPEND_0'])
 
 
 ## FGM
-# The FGM dataset contains magnetic field data from the fluxgate magnetometer (FGM). 
-# [Since the Geocentric Solar Ecliptic](https://sscweb.gsfc.nasa.gov/users_guide/Appendix_C.html) (GSE) 
+# The FGM dataset contains magnetic field data from the fluxgate magnetometer (FGM).
+# [Since the Geocentric Solar Ecliptic](https://sscweb.gsfc.nasa.gov/users_guide/Appendix_C.html) (GSE)
 # coordinate system is the standard for MMS data, we will extract non-scalar data in this system.
 
 # Download & Read Data
-# Now we can read data and its corresponding time stamps for a CDF variable. We choose the `'mms1_fgm_b_gse_srvy_l2'` 
-# variable because, as shown above, its `CATDESC` attribute describes it as the magnetic field in GSE coordinates. 
-# In order to be completely general, I will build the variable names from the attributes we have already defined. 
-# Variable names have the convention of `sc_instr_param_coords_optdesc_mode_level`, where `param` describes the 
-# quantity and `coords` is the coordinate system whenever relevant. Other components are similar to the file name 
+# Now we can read data and its corresponding time stamps for a CDF variable. We choose the `'mms1_fgm_b_gse_srvy_l2'`
+# variable because, as shown above, its `CATDESC` attribute describes it as the magnetic field in GSE coordinates.
+# In order to be completely general, I will build the variable names from the attributes we have already defined.
+# Variable names have the convention of `sc_instr_param_coords_optdesc_mode_level`, where `param` describes the
+# quantity and `coords` is the coordinate system whenever relevant. Other components are similar to the file name
 # conventions.
 
 # Update instrument-specific variables
@@ -159,12 +159,12 @@ print('FGM Files:')
 for file in files:
     # Open the file
     cdf = pycdf.CDF(file)
-    
+
     # Read the data
     #   - Convert numpy arrays to lists to make appending easier
     fgm_t += list(cdf[cdf[b_vname].attrs['DEPEND_0']][:])
     fgm_b += list(cdf[b_vname][:])
-    
+
     # Close the file
     cdf.close()
     print('  ' + file)
@@ -237,19 +237,19 @@ for ifile, file in enumerate(dce_files):
     # Open the file
     dce_cdf = pycdf.CDF(dce_files[ifile])
     scpot_cdf = pycdf.CDF(scpot_files[ifile])
-    
+
     # Read data and replace fill value with NaN
     e = dce_cdf[e_vname][:]
     v = scpot_cdf[scpot_vname][:]
     e[e == dce_cdf[e_vname].attrs['FILLVAL']] = np.nan
     v[v == scpot_cdf[scpot_vname].attrs['FILLVAL']] = np.nan
-    
+
     # Read the data
     #   - Convert numpy arrays to lists to make appending easier
     edp_t += list(dce_cdf[dce_cdf[e_vname].attrs['DEPEND_0']][:])
     edp_e += list(e)
     edp_v += list(v)
-    
+
     # Close the file
     dce_cdf.close()
     scpot_cdf.close()
@@ -277,12 +277,12 @@ edp_data = {
 edp_data = pd.DataFrame(edp_data, columns=edp_data.keys())
 
 ## FPI
-# Next, we will repeat the process for the Fast Plasma Instrument (FPI), which consists of the Dual Electron 
-# Spectrometer (DES) and the Dual Ion Spectrometer (DIS). These measure characteristics of the electron and 
+# Next, we will repeat the process for the Fast Plasma Instrument (FPI), which consists of the Dual Electron
+# Spectrometer (DES) and the Dual Ion Spectrometer (DIS). These measure characteristics of the electron and
 # ion plasmas, respectively. Here, we are interested in the density, velocity, and temperature.
 
-# Normally, survey mode files are a combination of fast and slow survey data and span an entire day. Because FPI 
-# produces so much data, however, it is only operated in fast survey mode and its "daily files" are broken up 
+# Normally, survey mode files are a combination of fast and slow survey data and span an entire day. Because FPI
+# produces so much data, however, it is only operated in fast survey mode and its "daily files" are broken up
 # into several files of shorter time intervals.
 
 
@@ -330,7 +330,7 @@ print('DIS Files:')
 for file in files:
     # Open the file
     cdf = pycdf.CDF(file)
-    
+
     # Read timee and shift to center of interval
     #   - There must be a bug in the CDF package because the Epoch_plus_var variables
     #     are read as empty but really contain scalar values
@@ -340,7 +340,7 @@ for file in files:
     dt_minus = 0
     dt_plus = 4.5
     t += dt.timedelta(seconds=(dt_plus - dt_minus) / 2.0)
-    
+
     # Read the data
     #   - Convert numpy arrays to lists to make appending easier
     dis_t += list(t)
@@ -350,7 +350,7 @@ for file in files:
     dis_temp_perp += list(cdf[t_perp_vname][:])
     dis_espec += list(cdf[espec_vname][:])
     dis_e += list(cdf[cdf[espec_vname].attrs['DEPEND_1']][:])
-    
+
     # Close the file
     cdf.close()
     print('  ' + file)
@@ -399,7 +399,9 @@ dis_data = {
 
 # Convert dictionary to data from
 dis_data = pd.DataFrame(dis_data, columns=dis_data.keys())
-for i in range(dis_e.shape[1]):
+
+# Add dis_espec to dis_data
+for i in range(dis_espec.shape[1]):
     dis_data['ESpec_E{:02}'.format(i)] = Series(data=dis_espec[:,i])
 
 
@@ -455,7 +457,7 @@ print('DES Files:')
 for file in files:
     # Open the file
     cdf = pycdf.CDF(file)
-    
+
     # Read timee and shift to center of interval
     #   - There must be a bug in the CDF package because the Epoch_plus_var variables
     #     are read as empty but really contain scalar values
@@ -465,7 +467,7 @@ for file in files:
     dt_minus = 0
     dt_plus = 4.5
     t += dt.timedelta(seconds=(dt_plus - dt_minus) / 2.0)
-    
+
     # Read the data
     des_t += list(t)
     des_n += list(cdf[n_vname][:])
@@ -527,69 +529,73 @@ des_data = {
 # Convert dictionary to data from
 des_data = pd.DataFrame(des_data, columns=des_data.keys())
 
-## EDI
+# Add des_espec to des_data
+for i in range(des_espec.shape[1]):
+    des_data['ESpec_E{:02}'.format(i)] = Series(data=des_espec[:,i])
 
-# # Update instrument-specific variables
-# edi_instr = 'edi'
-# edi_mode = 'srvy'
-# edi_optdesc = None   # Get whatever is available
-# 
-# if level == 'sitl':
-#     edi_level = 'ql'
-# else:
-#     edi_level = level
-# 
-# # Set attributes
-# sdc.instr = edi_instr
-# sdc.mode = edi_mode
-# sdc.level = edi_level
-# sdc.optdesc = edi_optdesc
-# 
-# # Figure out which data product is available
-# files = sdc.FileNames()
-# parts = mms_utils.parse_filename(files)
-# edi_optdesc = [p[4] for p in parts]
-# 
-# # EDI variable names
-# cts1_0_vname = '_'.join((sc, 'edi', 'counts1', '0'))
-# cts1_180_vname = '_'.join((sc, 'edi', 'counts1', '180'))
-# 
-# # Open the file
-# files = sdc.Download()
-# files = mms_utils.sort_files(files)[0]
-# 
-# # Read the data
-# edi_t = []
-# edi_cts1_0 = []
-# edi_cts1_180 = []
-# print('EDI Files:')
-# for file in files:
-#     # Open the file
-#     cdf = pycdf.CDF(file)
-#         
-#     # Read the data
-#     edi_t += list(cdf[cdf[cts1_0_vname].attrs['DEPEND_0']][:])
-#     edi_cts1_0 += list(cdf[cts1_0_vname][:])
-#     edi_cts1_180 += list(cdf[cts1_180_vname][:])
-# 
-#     # Close the file
-#     cdf.close()
-#     print('  ' + file)
-# 
-# # Convert back to numpy arrays
-# edi_t = np.array(edi_t)
-# edi_cts1_0 = np.array(edi_cts1_0)
-# edi_cts1_180 = np.array(edi_cts1_180)
-# 
-# 
-# #TODO: This is disabled for now, because the data is not a scalar
-# 
-# # Create a dictionary
-# edi_data = {
-#     'Time' : edi_t,
-#     'cts1_0' : edi_cts1_0,
-#     'cts1_180' : edi_cts1_180
-# }
+# EDI - Should work, but is disabled until verified
+
+# Update instrument-specific variables
+edi_instr = 'edi'
+edi_mode = 'srvy'
+edi_optdesc = None   # Get whatever is available
+
+if level == 'sitl':
+    edi_level = 'ql'
+else:
+    edi_level = level
+
+# Set attributes
+sdc.instr = edi_instr
+sdc.mode = edi_mode
+sdc.level = edi_level
+sdc.optdesc = 'amb'
+
+# Figure out which data product is available
+files = sdc.FileNames()
+parts = mms_utils.parse_filename(files)
+edi_optdesc = [p[4] for p in parts]
+
+# EDI variable names
+cts1_0_vname = '_'.join((sc, edi_instr, 'flux1', '0', edi_mode, 'l2'))
+cts1_180_vname = '_'.join((sc, edi_instr, 'flux1', '180', edi_mode, 'l2'))
+
+# Open the file
+files = sdc.Download()
+files = mms_utils.sort_files(files)[0]
+
+# Read the data
+edi_t = []
+edi_cts1_0 = []
+edi_cts1_180 = []
+
+print('EDI Files:')
+for file in files:
+    # Open the file
+    cdf = pycdf.CDF(file)
+
+    # Read the datafi
+    edi_t += list(cdf[cdf[cts1_0_vname].attrs['DEPEND_0']][:])
+    edi_cts1_0 += list(cdf[cts1_0_vname][:])
+    edi_cts1_180 += list(cdf[cts1_180_vname][:])
+
+    # Close the file
+    cdf.close()
+    print('  ' + file)
+
+# Convert back to numpy arrays
+edi_t = np.array(edi_t)
+edi_cts1_0 = np.array(edi_cts1_0)
+edi_cts1_180 = np.array(edi_cts1_180)
+
+#TODO: This is disabled for now, because the data is not a scalar
+
+# Create a dictionary
+edi_data = {
+    'Time' : edi_t,
+    'cts1_0' : edi_cts1_0,
+    'cts1_180' : edi_cts1_180
+}
 
 # Convert dictionary to data from
 #print(type(edi_data))
@@ -598,13 +604,15 @@ des_data = pd.DataFrame(des_data, columns=des_data.keys())
 #edi_data = pd.DataFrame(edi_data, columns=edi_data.keys())
 
 ## Interpolate All Values to `t_des`
-# In this step, we need to get all variables into the same time basis. We will interpolate data 
+# In this step, we need to get all variables into the same time basis. We will interpolate data
 # from FGM and DIS onto the time tags of DES.
 
 # Convert datetime objects to floats
 des_t_stamp = [t.timestamp() for t in des_t]
 fgm_t_stamp = [t.timestamp() for t in fgm_t]
 dis_t_stamp = [t.timestamp() for t in dis_t]
+edp_t_stamp = [t.timestamp() for t in edp_t]
+edi_t_stamp = [t.timestamp() for t in edi_t]
 
 # Interpolate FGM data
 #   - An Nx4 array, ordered as (Bx, By, Bz, |B|)
@@ -613,17 +621,36 @@ nComps = np.size(fgm_b, 1)
 fgm_b_interp = np.zeros([nTimes, nComps], dtype=float)
 for idx in range(nComps):
     fgm_b_interp[:,idx] = np.interp(des_t_stamp, fgm_t_stamp, fgm_b[:,idx])
+fgm_clock_angle_interp = np.interp(des_t_stamp, fgm_t_stamp, fgm_ca)
+fgm_normal_angle_interp  = np.interp(des_t_stamp, fgm_t_stamp, fgm_tbn)
 
 # Interpolate DIS data
 dis_n_interp = np.interp(des_t_stamp, dis_t_stamp, dis_n)
 dis_temp_para_interp = np.interp(des_t_stamp, dis_t_stamp, dis_temp_para)
 dis_temp_perp_interp = np.interp(des_t_stamp, dis_t_stamp, dis_temp_perp)
-
+dis_temp_interp = np.interp(des_t_stamp, dis_t_stamp, dis_temp)
 # An Nx3 array, ordered as (Vx, Vy, Vz)
 nComps = np.size(dis_v, 1)
 dis_v_interp = np.zeros([nTimes, nComps])
 for idx in range(nComps):
     dis_v_interp[:,idx] = np.interp(des_t_stamp, dis_t_stamp, dis_v[:,idx])
+# An Nx32 array, ordered as (ESpec_00, ESpec_01, ... , ESpec_30, ESpec_31)
+nComps = np.size(dis_espec, 1)
+dis_espec_interp = np.zeros([nTimes, nComps])
+for idx in range(nComps):
+    dis_espec_interp[:, idx] = np.interp(des_t_stamp, dis_t_stamp, dis_espec[:, idx])
+
+# Interpolate EDP data
+# An Nx3 array, ordered as (Ex, Ey, Ez)
+nComps = np.size(edp_e, 1)
+edp_e_interp = np.zeros([nTimes, nComps])
+for idx in range(nComps):
+    edp_e_interp[:,idx] = np.interp(des_t_stamp, edp_t_stamp, edp_e[:,idx])
+edp_scpot_interp = np.interp(des_t_stamp, edp_t_stamp, edp_v)
+    
+# Interpolate EDI data
+edi_cts1_0_interp = np.interp(des_t_stamp, edi_t_stamp, edi_cts1_0)
+edi_cts1_180_interp = np.interp(des_t_stamp, edi_t_stamp, edi_cts1_180)
 
 # Print results
 print('Time:                   ', np.shape(des_t), des_t.dtype)
@@ -651,15 +678,38 @@ data = {
     'FGM By' : fgm_b_interp[:,1],
     'FGM Bz' : fgm_b_interp[:,2],
     'FGM Bt' : fgm_b_interp[:,3],
+    'FGM Clock_angle'  : fgm_clock_angle_interp, # Needed?
+    'FGM Normal_angle' : fgm_normal_angle_interp, # Needed?
     'DIS N'  : dis_n_interp,
     'DIS Vx' : dis_v_interp[:,0],
     'DIS Vy' : dis_v_interp[:,1],
     'DIS Vz' : dis_v_interp[:,2],
     'DIS T_para' : dis_temp_para_interp,
     'DIS T_perp' : dis_temp_perp_interp,
+    'DIS Temp'   : dis_temp_interp, # Needed?
+    'EDP Ex' : edp_e_interp[:,0],
+    'EDP Ey' : edp_e_interp[:,1],
+    'EDP Ez' : edp_e_interp[:,2],
+    'EDP Scpot'  : edp_scpot_interp, # Needed?
+    'EDI cts1_0' : edi_cts1_0_interp,
+    'EDI cts1_180'     : edi_cts1_180_interp 
 }
+
+# Add des_espec data en masse
+for col in range(np.size(des_espec, 1)):
+    data['DES ESpec_{0:02d}'.format(col)] = des_espec[:,col]
+
+# Add dis_espec_interp data en masse
+for col in range(np.size(dis_espec_interp, 1)):
+    data['DIS ESpec_{0:02d}'.format(col)] = dis_espec_interp[:,col]
 
 # Create a data frame
 data = pd.DataFrame(data, columns=data.keys())
 
+# Export each sc's data to CSVs
 data.to_csv("~/data/output.csv", index=False)
+des_data.to_csv("~/data/des_output.csv", index=False)
+dis_data.to_csv("~/data/dis_output.csv", index=False)
+fgm_data.to_csv("~/data/fgm_output.csv", index=False)
+edp_data.to_csv("~/data/edp_output.csv", index=False)
+edi_data.to_csv("~/data/edi_output.csv", index=False)
