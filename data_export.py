@@ -3,12 +3,13 @@ import datetime as dt
 import spacepy
 from spacepy import pycdf
 import pandas as pd
-from pandas import DataFrame
+from pandas import DataFrame, Series
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import os.path
 import pymms
-from pymms import mms_utils
+from pymms.pymms import mms_utils
+import pdb
 
 ## Creating the pymms object
 # First, we create an instance of the object that communicates with the SDC. For the sake of this 
@@ -18,7 +19,7 @@ from pymms import mms_utils
 # below to `'mms2'`, `'mms3'`, or `'mms4'`.
 
 # Create an instance of SDC object
-sdc = pymms.MrMMS_SDC_API()
+sdc = pymms.pymms.MrMMS_SDC_API()
 
 # Define the spacecraft. We will use the variable later when accessing the CDF files.
 sc = 'mms1'
@@ -65,7 +66,6 @@ files = sdc.Download()
 
 print('FGM Files:')
 print(*files, sep='\n')
-
 
 
 ## CDF Attributes and Variables
@@ -373,6 +373,16 @@ dis_temp = 1.0/3.0 * (2.0*dis_temp_perp + dis_temp_para)
 ## Data Frame
 
 # Create a dictionary
+dis_data = pd.DataFrame()
+dis_data['Time'] = pd.Series(dis_t)
+dis_data['N'] = pd.Series(dis_t)
+dis_data['Vx'] = pd.Series(dis_t)
+dis_data['Vy'] = pd.Series(dis_t)
+dis_data['Vz'] = pd.Series(dis_t)
+dis_data['Vmag'] = pd.Series(dis_t)
+dis_data['Tpara'] = pd.Series(dis_t)
+dis_data['Tperp'] = pd.Series(dis_t)
+dis_data['T'] = pd.Series(dis_temp)
 dis_data = {
     'Time' :  dis_t,
     'N' : dis_n,
@@ -389,6 +399,9 @@ dis_data = {
 
 # Convert dictionary to data from
 dis_data = pd.DataFrame(dis_data, columns=dis_data.keys())
+for i in range(dis_e.shape[1]):
+    dis_data['ESpec_E{:02}'.format(i)] = Series(data=dis_espec[:,i])
+
 
 ## DES
 
