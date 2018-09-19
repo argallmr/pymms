@@ -597,11 +597,11 @@ edi_data = {
     'cts1_180' : edi_cts1_180
 }
 
-# Convert dictionary to data from
-#print(type(edi_data))
-#print(edi_data.keys())
-#print(edi_data['Time'].shape)
-#edi_data = pd.DataFrame(edi_data, columns=edi_data.keys())
+#Convert dictionary to data from
+print(type(edi_data))
+print(edi_data.keys())
+print(edi_data['Time'].shape)
+edi_data = pd.DataFrame(edi_data, columns=edi_data.keys())
 
 ## Interpolate All Values to `t_des`
 # In this step, we need to get all variables into the same time basis. We will interpolate data
