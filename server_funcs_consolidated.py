@@ -766,7 +766,7 @@ def run(spacecraft, level, start_date, end_date):
     
     # Create a table and insert rows from the associated .csv
     file_path = '/Home/colin/pymms/sql' + '_'.join([spacecraft, level, start_date, 'to']) + end_date + '.csv'   
-    createTable(file_path, 'mms1')
+    createTable(spacecraft, level, start_date, end_date, 'mms1')
     insertRows(file_path, 'mms1') 
     
     connection.commit()
