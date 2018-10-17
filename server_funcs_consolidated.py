@@ -780,4 +780,4 @@ start_date = '2015-12-06'
 end_date = '2015-12-06T23:59:59'
 
 data = data_export(spacecraft, level, start_date, end_date)
-run(spacecraft, level, start_data, end_date)
+run(spacecraft, level, start_date, end_date)
