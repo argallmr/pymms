@@ -763,8 +763,6 @@ def insertRows(file_path, spacecraft):
         c.execute(insert_row)
 
 def run(spacecraft, level, start_date, end_date):
-    # Download specified data
-    data_download(spacecraft, level, start_date, end_date)
     
     # Create a table and insert rows from the associated .csv
     file_path = '/Home/colin/pymms/sql' + '_'.join([spacecraft, level, start_date, 'to']) + end_date + '.csv'   
