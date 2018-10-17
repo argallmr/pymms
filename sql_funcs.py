@@ -62,7 +62,7 @@ def run(spacecraft, level, start_date, end_date):
     connection.close()
     
 # Open connection to SQLite DB
-sqlite_file = '/Home/colin/pymms/sql/data.db'
+sqlite_file = '/home/colin/pymms/sql/data.db'
 connection = sqlite3.connect(sqlite_file)
 c = connection.cursor()
     
