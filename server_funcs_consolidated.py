@@ -715,12 +715,12 @@ def data_export(spacecraft, level, start_date, end_date):
 #    edp_data.to_csv("~/data/edp_output.csv", index=False)
 #    edi_data.to_csv("~/data/edi_output.csv", index=False)
 
-def checkTableExists(table_name):
-    check_table = "SELECT name FROM sqlite_master WHERE type='table' AND name='{}'".format(table_name)
-    c.execute(check_table)
-    result = c.fetchone()[0]
-    if result: return True;
-    else: return False;
+# def checkTableExists(table_name):
+#     check_table = "SELECT name FROM sqlite_master WHERE type='table' AND name='{{}}'".format(table_name)
+#     c.execute(check_table)
+#     result = c.fetchone()[0]
+#     if result: return True;
+#     else: return False;
 
 def getRowVals(rownum, data, spacecraft):
     rowvals = "'" + str(data.loc[[rownum]].values.tolist()[0][0]) + "',"
@@ -733,9 +733,8 @@ def createTable(spacecraft, level, start_date, end_date, table_name):
     columns = list(data)
     
     # Check if table exists in DB already
-    if checkTableExists(table_name):
-        drop_table = 'DROP TABLE mms1'
-        c.execute(drop_table)
+    drop_table = 'DROP TABLE if exists mms1'
+    c.execute(drop_table)
     
     # Create a new table with columns from the dataframe  
     create_table = 'CREATE TABLE ' +  table_name + ' ('
