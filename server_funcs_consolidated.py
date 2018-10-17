@@ -728,8 +728,7 @@ def getRowVals(rownum, data, spacecraft):
     rowvals += ', '.join([ str(f) for f in data.loc[[rownum]].values.tolist()[0][1:]]);
     return rowvals
 
-def createTable(spacecraft, level, start_date, end_date, table_name):
-    data = data_export(spacecraft, level, start_date, end_date)
+def createTable(spacecraft, level, start_date, end_date, table_name, data):
     columns = list(data)
     
     # Check if table exists in DB already
@@ -754,19 +753,18 @@ def createTable(spacecraft, level, start_date, end_date, table_name):
     c.execute(set_primary_index)
     c.execute(set_secondary_index)
 
-def insertRows(file_path, spacecraft):
+def insertRows(file_path, spacecraft, data):
     # Insert rows of dataframe to table
-    data = pd.read_csv(file_path); # Should point to a spacecraft's data csv
     for rownum in range(1,len(data)):
         insert_row = ('INSERT INTO mms1 VALUES({});'.format(getRowVals(rownum, data, spacecraft)))
         c.execute(insert_row)
 
-def run(spacecraft, level, start_date, end_date):
+def run(spacecraft, level, start_date, end_date, data):
     
     # Create a table and insert rows from the associated .csv
     file_path = '/Home/colin/pymms/sql' + '_'.join([spacecraft, level, start_date, 'to']) + end_date + '.csv'   
-    createTable(spacecraft, level, start_date, end_date, 'mms1')
-    insertRows(file_path, 'mms1') 
+    createTable(spacecraft, level, start_date, end_date, 'mms1', data)
+    insertRows(file_path, 'mms1', data) 
     
     connection.commit()
     connection.close()
@@ -775,5 +773,11 @@ def run(spacecraft, level, start_date, end_date):
 sqlite_file = '/home/colin/pymms/sql/data.db'
 connection = sqlite3.connect(sqlite_file)
 c = connection.cursor()
-    
-run('mms1', 'l2', '2015-12-06', '2015-12-06T23:59:59')
+
+spacecraft = 'mms1'
+level = 'l2'
+start_date = '2015-12-06'
+end_date = '2015-12-06T23:59:59'
+
+data = data_export(spacecraft, level, start_date, end_date)
+run(spacecraft, level, start_data, end_date)
