@@ -12,5 +12,5 @@ setup(
     packages = ["pymms"],
     #long_description = read("README.md"),
     install_requires = ["numpy >= 1.8",
-        "pandas", "matplotlib", "spacepy", "tqdm"]
+        "pandas", "matplotlib", "spacepy", "tqdm", "gtk"]
     )
