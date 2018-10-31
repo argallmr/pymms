@@ -11,6 +11,8 @@ import pymms
 from pymms import mms_utils
 import pdb
 import sqlite3
+from datetime import datetime
+from datetime import timedelta
 
 ## Creating the pymms object
 # First, we create an instance of the object that communicates with the SDC. For the sake of this
@@ -22,14 +24,20 @@ import sqlite3
 # Create an instance of SDC object
 sdc = pymms.MrMMS_SDC_API()
 
-def data_export(spacecraft, level, start_date, end_date, data_download_path):
+# Declare the vertical user who's folder in /data/ will be store the downloaded MMS data
+data_downloaduser = 'colin'
+
+# Declare the vertical user who's folder will be store the SQL DB
+data_downloaduser = 'colin'
+
+def data_export(spacecraft, level, start_date, end_date):
     # Define the spacecraft. We will use the variable later when accessing the CDF files.
     sc = spacecraft
     #level = 'sitl'                    # 'l2' or 'sitl'
     level = level
-    start_date = start_date
-    end_date = end_date
-    data_root = os.path.expanduser(data_download_path)
+    start_date = start_date.strftime('%Y-%m-%dT%H:%M:%S')
+    end_date = end_date.strftime('%Y-%m-%dT%H:%M:%S')
+    data_root = os.path.expanduser('~/data/{}/mms/').format(data_downloaduser)
             # Specifying data_root="~/" does not expand the tilde yet
             # However, if data_root=None, then ~/data is the default
     
@@ -707,28 +715,16 @@ def data_export(spacecraft, level, start_date, end_date, data_download_path):
     data = pd.DataFrame(data, columns=data.keys())
     
     return data
-    
-#    Instrument-specific output disabled for mass data download
-#    des_data.to_csv("~/data/des_output.csv", index=False)
-#    dis_data.to_csv("~/data/dis_output.csv", index=False)
-#    fgm_data.to_csv("~/data/fgm_output.csv", index=False)
-#    edp_data.to_csv("~/data/edp_output.csv", index=False)
-#    edi_data.to_csv("~/data/edi_output.csv", index=False)
 
-# def checkTableExists(table_name):
-#     check_table = "SELECT name FROM sqlite_master WHERE type='table' AND name='{{}}'".format(table_name)
-#     c.execute(check_table)
-#     result = c.fetchone()[0]
-#     if result: return True;
-#     else: return False;
-
+# Read a row of the dataframe and convert it to an SQL-friendly string format
 def getRowVals(rownum, data, spacecraft):
     rowvals = "'" + str(data.loc[[rownum]].values.tolist()[0][0]) + "',"
     rowvals += "'" + spacecraft + "', "
     rowvals += ', '.join([ str(f) for f in data.loc[[rownum]].values.tolist()[0][1:]]);
     return rowvals
 
-def createTable(spacecraft, level, start_date, end_date, table_name, data):
+# Create a table for the SQL DB. This will delete any existing table since this script should only be run once                                                         
+def createTable(spacecraft, level, table_name, data):
     columns = list(data)
     
     # Check if table exists in DB already
@@ -748,37 +744,47 @@ def createTable(spacecraft, level, start_date, end_date, table_name, data):
     c.execute(create_table)
     
     # Set indices
-    set_primary_index = 'CREATE UNIQUE INDEX Time ON mms1(Time)'
-    set_secondary_index = 'CREATE INDEX Spacecraft ON mms1(Spacecraft)'
+    set_primary_index = 'CREATE UNIQUE INDEX Time ON {}(Time)'.format(table_name)
+    set_secondary_index = 'CREATE INDEX Spacecraft ON {}(Spacecraft)'.format(table_name)
     c.execute(set_primary_index)
     c.execute(set_secondary_index)
 
-def insertRows(file_path, spacecraft, data):
+# Insert rows into the DB based on the output of getRowVals
+def insertRows(spacecraft, data):
     # Insert rows of dataframe to table
     for rownum in range(1,len(data)):
         insert_row = ('INSERT INTO mms1 VALUES({});'.format(getRowVals(rownum, data, spacecraft)))
         c.execute(insert_row)
 
-def run(spacecraft, level, start_date, end_date, data):
-    
-    # Create a table and insert rows from the associated .csv
-    #file_path = '/Home/colin/pymms/sql' + '_'.join([spacecraft, level, start_date, 'to']) + end_date + '.csv'   
-    createTable(spacecraft, level, start_date, end_date, 'mms1', data)
-    insertRows(file_path, 'mms1', data) 
-    
+# Create a table and insert rows based on the data downloaded from data_export
+def run(spacecraft, level, start_date, end_date):
+    start_datetime = datetime.strptime(start_date, '%Y-%m-%dT%H:%M:%S')
+    end_datetime = datetime.strptime(end_date, '%Y-%m-%dT%H:%M:%S')
+    i=0
+
+    while start_datetime < end_datetime:
+        end_datetime = start_datetime + timedelta(days=1)
+        data = data_export(spacecraft, level, start_datetime, end_datetime)
+
+        if i == 0: 
+            createTable(spacecraft, level, 'mms1', data)
+
+        insertRows('mms1', data)
+        start_datetime + timedelta(days=1) 
+        i+=1
+
     connection.commit()
     connection.close()
     
 # Open connection to SQLite DB
-sqlite_file = '/home/colin/pymms/sql/data.db'
+#sqlite_file = '/home/{}/pymms/sql/data.db'.format(user)
+sqlite_file = '/Users/colinrsmall/data/sql/data.db'
 connection = sqlite3.connect(sqlite_file)
 c = connection.cursor()
 
 spacecraft = 'mms1'
 level = 'l2'
-start_date = '2015-12-06'
+start_date = '2015-12-06T00:00:00'
 end_date = '2015-12-06T23:59:59'
-data_download_path = '/data/colin/mms/'
 
-data = data_export(spacecraft, level, start_date, end_date, data_download_path)
-run(spacecraft, level, start_date, end_date, data)
+run(spacecraft, level, start_date, end_date)
