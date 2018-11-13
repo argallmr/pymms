@@ -774,6 +774,8 @@ def insertRows(spacecraft, data):
     global c # TODO: rename to something more specific
     for rownum in range(1,len(data)):
         insert_row = ('INSERT INTO mms1 VALUES({});'.format(getRowVals(rownum, data, spacecraft)))
+        # replace NaN values
+        insert_row.replace('nan', 'NULL')
         c.execute(insert_row)
 
 def run(spacecraft, level, start_date, end_date, data):
