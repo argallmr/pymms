@@ -773,10 +773,13 @@ def insertRows(spacecraft, data):
     """
     global c # TODO: rename to something more specific
     for rownum in range(1,len(data)):
-        insert_row = ('INSERT INTO mms1 VALUES({});'.format(getRowVals(rownum, data, spacecraft)))
-        # replace NaN values
-        insert_row.replace('nan', 'NULL')
-        c.execute(insert_row)
+        try:
+            insert_row = ('INSERT INTO mms1 VALUES({});'.format(getRowVals(rownum, data, spacecraft)))
+            # replace NaN values; does not seem to work
+            insert_row.replace('nan', 'NULL')
+            c.execute(insert_row)
+        except sqlite3.OperationalError as e:
+            print("Warning: error saving row: " + format(e))
 
 def run(spacecraft, level, start_date, end_date, data):
     
