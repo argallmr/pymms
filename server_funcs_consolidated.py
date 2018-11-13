@@ -794,8 +794,8 @@ if __name__ == "__main__":
 
     spacecraft = 'mms1'
     level = 'l2'
-    start_date = '2015-12-06'
-    end_date = '2015-12-06T23:59:59'
+    start_date = '2015-12-07'
+    end_date = '2015-12-31T23:59:59'
     data_download_path = '/data/mms/'
 
     data = data_export(spacecraft, level, start_date, end_date, data_download_path)
