@@ -247,7 +247,7 @@ def filter_time(fnames, start_date, end_date):
     
     # Output
     files = fnames
-    if type(files) is str:
+    if isinstance(files, str):
         files = [files]
     
     # Convert date range to datetime objects
@@ -280,27 +280,15 @@ def filter_time(fnames, start_date, end_date):
     #   - Assume the start time of one file marks the end time of the previous file.
     #   - With this, we look for the file that begins just prior to START_DATE and
     #     throw away any files that start before it.
-    idx = [i for i, t in enumerate(fstart) if t.date() < start_date.date()]
+#    idx = [i for i, t in enumerate(fstart) if t.date() < start_date.date()]
+    idx = [i for i, t in enumerate(fstart) if t >= start_date]
     if len(idx) > 0:
-        fstart = fstart[idx[-1]:]
-        files = files[idx[-1]:]
+        fstart = [fstart[i] for i in idx]
+        files = [files[i] for i in idx]
+    else:
+        fstart = []
+        files = []
     
-    # The last caveat:
-    #   - Our filter may be too lenient. The first file may or may not contain
-    #     data within our interval.
-    #   - Check if it starts on the same day. If not, toss it
-    #   - There may be many files with the same start time, but different
-    #     version numbers. Make sure we get all copies OF the first start
-    #     time.
-    if (len(fstart) > 0) and (fstart[0].date() < start_date.date()):
-        idx = [i for i, t in enumerate(fstart) if t.date() != fstart[0].date()]
-        if len(idx) > 0:
-            fstart = [fstart[i] for i in idx]
-            files = [files[i] for i in idx]
-        else:
-            fstart = []
-            files = []
-        
     return files
 
 

@@ -561,7 +561,7 @@ class MrMMS_SDC_API:
     
     @property
     def start_date(self):
-        if type(self._start_date) is dt.datetime:
+        if isinstance(self._start_date, dt.datetime):
             theDate = self._start_date.isoformat()
         else:
             theDate = self._start_date
@@ -573,7 +573,7 @@ class MrMMS_SDC_API:
         # Convert string to datetime object
         if isinstance(value, str):
             try:
-                value = dt.datetime.strptime(value, '%Y-%m-%dT%H:%M:%S')
+                value = dt.datetime.strptime(value[0:19], '%Y-%m-%dT%H:%M:%S')
             except:
                 try:
                     value = dt.datetime.strptime(value, '%Y-%m-%d')
@@ -585,19 +585,20 @@ class MrMMS_SDC_API:
     
     @property
     def end_date(self):
-        if type(self._end_date) is dt.datetime:
+        if isinstance(self._end_date, dt.datetime):
             theDate = self._end_date.isoformat()
         else:
             theDate = self._end_date
         
         return theDate
     
+    
     @end_date.setter
     def end_date(self, value):
         # Convert string to datetime object
         if isinstance(value, str):
             try:
-                value = dt.datetime.strptime(value, '%Y-%m-%dT%H:%M:%S')
+                value = dt.datetime.strptime(value[0:19], '%Y-%m-%dT%H:%M:%S')
             except:
                 try:
                     value = dt.datetime.strptime(value, '%Y-%m-%d')
