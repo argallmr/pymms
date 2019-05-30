@@ -193,6 +193,8 @@ class MrMMS_SDC_API:
         
         # Get available files
         local_files, remote_files = self.Search()
+        if self.offline:
+            return local_files
         
         # Get information on the files that were found
         #   - To do that, specify the specific files. This sets all other properties to None
@@ -514,7 +516,8 @@ class MrMMS_SDC_API:
         
         # Search locally if offline
         if self.offline:
-            local_files = self.Local_FileNames
+            local_files = self.Local_FileNames()
+            remote_files = []
         
         # Search remote first
         #   - SDC is definitive source of files
