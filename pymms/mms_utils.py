@@ -284,8 +284,6 @@ def filter_time(fnames, start_date, end_date):
 #    idx = [i for i, t in enumerate(fstart) if t.date() < start_date.date()]
     idx = [i for i, t in enumerate(fstart) if t >= start_date]
 
-    pdb.set_trace()
-
     if (len(idx) == 0) & (fstart[-1].date() == start_date.date()):
         idx = [len(fstart)-1]
     elif (len(idx) != 0) & ((idx[0] != 0) & (fstart[idx[0]] != start_date)):
