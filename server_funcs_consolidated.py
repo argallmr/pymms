@@ -1,3 +1,4 @@
+#!/usr/bin/python3
 import numpy as np
 import datetime as dt
 import spacepy
@@ -91,28 +92,28 @@ def data_export(spacecraft, level, start_date, end_date, data_download_path):
     cdf = pycdf.CDF(files[0])
     
     # Show global attribute
-    print('Global Attributes:')
-    for gAttrName in cdf.attrs:
-        print('\t' + gAttrName)
+    #print('Global Attributes:')
+    #for gAttrName in cdf.attrs:
+    #    print('\t' + gAttrName)
     
     # Show variable names
-    print('\nVariable Names:')
-    for varName in cdf:
-        print('\t' + varName)
+    #print('\nVariable Names:')
+    #for varName in cdf:
+    #    print('\t' + varName)
     
     # Select the magnetic field variable
     vname = '_'.join((sc, fgm_instr, 'b', fgm_coords, fgm_mode, fgm_level))
     
     # Show variable attributes for a particular variable
-    print('\nVariable Attributes for "' + vname + '":')
-    for vAttrName in cdf[vname].attrs:
-        print('\t' + vAttrName)
+    #print('\nVariable Attributes for "' + vname + '":')
+    #for vAttrName in cdf[vname].attrs:
+    #    print('\t' + vAttrName)
     
     # Important variable attributes:
-    print('\nValues of Important Variable Attributes:')
-    print('\t', 'CATDESC: ', cdf[vname].attrs['CATDESC'])
-    print('\t', 'FILLVAL: ', cdf[vname].attrs['FILLVAL'])
-    print('\t', 'DEPEND_0: ', cdf[vname].attrs['DEPEND_0'])
+    #print('\nValues of Important Variable Attributes:')
+    #print('\t', 'CATDESC: ', cdf[vname].attrs['CATDESC'])
+    #print('\t', 'FILLVAL: ', cdf[vname].attrs['FILLVAL'])
+    #print('\t', 'DEPEND_0: ', cdf[vname].attrs['DEPEND_0'])
     
     
     ## FGM
@@ -598,9 +599,9 @@ def data_export(spacecraft, level, start_date, end_date, data_download_path):
     }
     
     #Convert dictionary to data from
-    print(type(edi_data))
-    print(edi_data.keys())
-    print(edi_data['Time'].shape)
+    #print(type(edi_data))
+    #print(edi_data.keys())
+    #print(edi_data['Time'].shape)
     edi_data = pd.DataFrame(edi_data, columns=edi_data.keys())
     
     ## Interpolate All Values to `t_des`
@@ -653,16 +654,16 @@ def data_export(spacecraft, level, start_date, end_date, data_download_path):
     edi_cts1_180_interp = np.interp(des_t_stamp, edi_t_stamp, edi_cts1_180)
     
     # Print results
-    print('Time:                   ', np.shape(des_t), des_t.dtype)
-    print('DES Density:            ', np.shape(des_n), des_n.dtype)
-    print('DES Velocity:           ', np.shape(des_v), des_v.dtype)
-    print('DES Temperature (para): ', np.shape(des_temp_para), des_temp_para.dtype)
-    print('DES Temperature (perp): ', np.shape(des_temp_perp), des_temp_perp.dtype)
-    print('FGM Magnetic Field:     ', np.shape(fgm_b_interp), fgm_b_interp.dtype)
-    print('DIS Density:            ', np.shape(dis_n_interp), dis_n_interp.dtype)
-    print('DIS Velocity:           ', np.shape(dis_v_interp), dis_v_interp.dtype)
-    print('DIS Temperature (para): ', np.shape(dis_temp_para_interp), dis_temp_para_interp.dtype)
-    print('DIS Temperature (perp): ', np.shape(dis_temp_perp_interp), dis_temp_perp_interp.dtype)
+    #print('Time:                   ', np.shape(des_t), des_t.dtype)
+    #print('DES Density:            ', np.shape(des_n), des_n.dtype)
+    #print('DES Velocity:           ', np.shape(des_v), des_v.dtype)
+    #print('DES Temperature (para): ', np.shape(des_temp_para), des_temp_para.dtype)
+    #print('DES Temperature (perp): ', np.shape(des_temp_perp), des_temp_perp.dtype)
+    #print('FGM Magnetic Field:     ', np.shape(fgm_b_interp), fgm_b_interp.dtype)
+    #print('DIS Density:            ', np.shape(dis_n_interp), dis_n_interp.dtype)
+    #print('DIS Velocity:           ', np.shape(dis_v_interp), dis_v_interp.dtype)
+    #print('DIS Temperature (para): ', np.shape(dis_temp_para_interp), dis_temp_para_interp.dtype)
+    #print('DIS Temperature (perp): ', np.shape(dis_temp_perp_interp), dis_temp_perp_interp.dtype)
     
     ## Write a CSV file
     # Open file and write data
@@ -728,57 +729,79 @@ def getRowVals(rownum, data, spacecraft):
     rowvals += ', '.join([ str(f) for f in data.loc[[rownum]].values.tolist()[0][1:]]);
     return rowvals
 
-def createTable(spacecraft, level, start_date, end_date, table_name, data):
+def createTable(spacecraft, level, start_date, end_date, table_name, data, drop = False):
+    """
+    Uses a global variable `c` for the SQL connection
+
+    @param drop Whether to drop the table if it already exists
+    """
+    global c
     columns = list(data)
     
     # Check if table exists in DB already
-    drop_table = 'DROP TABLE if exists mms1'
-    c.execute(drop_table)
+    if drop:
+        drop_table = 'DROP TABLE if exists mms1'
+        c.execute(drop_table)
     
-    # Create a new table with columns from the dataframe  
-    create_table = 'CREATE TABLE ' +  table_name + ' ('
+    # attempt to create the table. Fails if the table already exists
+    try:
+        # Create a new table with columns from the dataframe  
+        create_table = 'CREATE TABLE ' +  table_name + ' ('
     
-    # Create string containing column names and types
-    colnames = 'Time TIMESTAMP, Spacecraft STRING , '
-    for colname in columns[1:len(columns)-1]:
-        colnames += colname.replace(' ', '_') + ' REAL, '
-    colnames += columns[len(columns)-1].replace(' ', '_') + ' REAL'
-    create_table += colnames + ');'
+        # Create string containing column names and types
+        colnames = 'Time TIMESTAMP, Spacecraft STRING , '
+        for colname in columns[1:len(columns)-1]:
+            colnames += colname.replace(' ', '_') + ' REAL, '
+        colnames += columns[len(columns)-1].replace(' ', '_') + ' REAL'
+        create_table += colnames + ');'
     
-    c.execute(create_table)
-    
-    # Set indices
-    set_primary_index = 'CREATE UNIQUE INDEX Time ON mms1(Time)'
-    set_secondary_index = 'CREATE INDEX Spacecraft ON mms1(Spacecraft)'
-    c.execute(set_primary_index)
-    c.execute(set_secondary_index)
+        c.execute(create_table)
 
-def insertRows(file_path, spacecraft, data):
-    # Insert rows of dataframe to table
+        # Set indices
+        set_primary_index = 'CREATE UNIQUE INDEX Time ON mms1(Time)'
+        set_secondary_index = 'CREATE INDEX Spacecraft ON mms1(Spacecraft)'
+        c.execute(set_primary_index)
+        c.execute(set_secondary_index)
+    except sqlite3.OperationalError as error:
+        print("Warning: Creating the table failed with an error: " + format(error))
+        pass
+    
+
+def insertRows(spacecraft, data):
+    """ 
+    Insert rows of dataframe to table
+    """
+    global c # TODO: rename to something more specific
     for rownum in range(1,len(data)):
-        insert_row = ('INSERT INTO mms1 VALUES({});'.format(getRowVals(rownum, data, spacecraft)))
-        c.execute(insert_row)
+        try:
+            insert_row = ('INSERT INTO mms1 VALUES({});'.format(getRowVals(rownum, data, spacecraft)))
+            # replace NaN values; does not seem to work
+            insert_row.replace('nan', 'NULL')
+            c.execute(insert_row)
+        except sqlite3.OperationalError as e:
+            print("Warning: error saving row: " + format(e))
 
 def run(spacecraft, level, start_date, end_date, data):
     
     # Create a table and insert rows from the associated .csv
-    #file_path = '/Home/colin/pymms/sql' + '_'.join([spacecraft, level, start_date, 'to']) + end_date + '.csv'   
+    #file_path = '/home/colin/pymms/sql' + '_'.join([spacecraft, level, start_date, 'to']) + end_date + '.csv'   
     createTable(spacecraft, level, start_date, end_date, 'mms1', data)
-    insertRows(file_path, 'mms1', data) 
+    insertRows('mms1', data) 
     
     connection.commit()
     connection.close()
     
-# Open connection to SQLite DB
-sqlite_file = '/home/colin/pymms/sql/data.db'
-connection = sqlite3.connect(sqlite_file)
-c = connection.cursor()
+if __name__ == "__main__":
+    # Open connection to SQLite DB
+    sqlite_file = '/data/mms/alldata.db'
+    connection = sqlite3.connect(sqlite_file)
+    c = connection.cursor()
 
-spacecraft = 'mms1'
-level = 'l2'
-start_date = '2015-12-06'
-end_date = '2015-12-06T23:59:59'
-data_download_path = '/data/colin/mms/'
+    spacecraft = 'mms1'
+    level = 'l2'
+    start_date = '2015-12-07'
+    end_date = '2015-12-31T23:59:59'
+    data_download_path = '/data/mms/'
 
-data = data_export(spacecraft, level, start_date, end_date, data_download_path)
-run(spacecraft, level, start_date, end_date, data)
+    data = data_export(spacecraft, level, start_date, end_date, data_download_path)
+    run(spacecraft, level, start_date, end_date, data)
