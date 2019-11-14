@@ -1,16 +1,26 @@
-
 from setuptools import setup
 
+with open("README.md", "r") as fh:
+    long_description = fh.read()
+
 setup(
-    name = "MMS Data Extractor",
+    name = "MMS-SDC-API",
     version = "0.0.1",
-    author = "Matthew Argall",
-    author_email = "",
-    description = "Exports data from the pymms project",
-    license = "?",
+    author = "Matthew R. Argall",
+    author_email = "argallmr@gmail.com",
+    description = "Access data from the MMS mission via its API.",
+    long_description = long_description,
+    long_description_content_type = "text/markdown",
+    url = "https://github.com/argallmr/pymms"
+    license = "MIT",
     keywords = "space, MMS, data",
     packages = ["pymms"],
-    #long_description = read("README.md"),
     install_requires = ["numpy >= 1.8",
-        "pandas", "matplotlib", "spacepy", "tqdm"]
-    )
+                        "pandas", 
+                        "matplotlib", 
+                        "requests",
+                        "spacepy", 
+                        "tqdm"
+    ]
+    python_requires = '>=3.6',
+)
