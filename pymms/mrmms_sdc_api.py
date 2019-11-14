@@ -97,9 +97,11 @@ class MrMMS_SDC_API:
         #     version_info | file_info) are true
         if name == 'anc_product':
             self.data_type = 'ancillary'
+        
         elif name == 'data_type':
             if value not in ('ancillary', 'hk', 'science'):
                 raise ValueError('Invalid value for attribute "' + name + '".')
+        
         elif name == 'files':
             if value is not None:
                 self.sc = None
@@ -108,11 +110,33 @@ class MrMMS_SDC_API:
                 self.level = None
                 self.optdesc = None
                 self.version = None
+        
         elif name == 'level':
             if value in [None, 'l2', 'l3']:
                 self.site = 'public'
             else:
                 self.site = 'private'
+        
+        elif name in ('start_date', 'end_date'):
+            # Convert string to datetime object
+            if isinstance(value, str):
+                try:
+                    value = dt.datetime.strptime(value[0:19], '%Y-%m-%dT%H:%M:%S')
+                except:
+                    try:
+                        value = dt.datetime.strptime(value, '%Y-%m-%d')
+                    except:
+                        ValueError('Invalid format for attribute start_date.')
+        
+        elif name == 'site':
+            if value in ('team', 'team_site', 'sitl', 'private'):
+                value = 'sitl'
+            elif value in ('public', 'public_site'):
+                value = 'public'
+            else:
+                raise ValueError('Invalid value for the "site" attribute')
+            
+            
         
         # Set the value
         super(MrMMS_SDC_API, self).__setattr__(name, value)
@@ -126,7 +150,7 @@ class MrMMS_SDC_API:
         
         # Build query from parts of file names
         query = '?'
-        qdict = self.Query()
+        qdict = self.query()
         for key in qdict:
             query += key + '=' + qdict[key] + '&'
         
@@ -185,14 +209,14 @@ class MrMMS_SDC_API:
         return r
     
     
-    def Download(self):
+    def download(self):
         self._info_type = 'download'
         # Build the URL sans query
         url = '/'.join((self._sdc_home, self.site, 'files', 'api', 'v1',
                         self._info_type, self.data_type))
         
         # Get available files
-        local_files, remote_files = self.Search()
+        local_files, remote_files = self.search()
         if self.offline:
             return local_files
         
@@ -212,7 +236,7 @@ class MrMMS_SDC_API:
         self.files = [file.split('/')[-1] for file in remote_files]
         
         self.site = site
-        file_info = self.FileInfo()
+        file_info = self.file_info()
         
         # Amount to download per iteration
         block_size = 1024*128
@@ -253,17 +277,17 @@ class MrMMS_SDC_API:
         return local_files
     
     
-    def FileInfo(self):
+    def file_info(self):
         """Obtain file information from the SDC."""
         self._info_type = 'file_info'
-        response = self.Get()
+        response = self.get()
         return response.json()
         
     
-    def FileNames(self):
+    def file_names(self):
         """Obtain file names from the SDC."""
         self._info_type = 'file_names'
-        response = self.Get()
+        response = self.get()
         
         if response.text == '':
             files = []
@@ -274,7 +298,7 @@ class MrMMS_SDC_API:
         return files
     
     
-    def Local_FileNames(self, mirror=False):
+    def local_file_name(self, mirror=False):
         """Search for MMS files on the local system.
         
         Files must be located in an MMS-like directory structure.
@@ -350,7 +374,7 @@ class MrMMS_SDC_API:
         self._session.auth = (username, password)
     
     
-    def Get(self):
+    def get(self):
         """Retrieve data from the SDC.
         """
         # Build the URL sans query
@@ -405,7 +429,7 @@ class MrMMS_SDC_API:
         
         return path
     
-    def ParseFileNames(self, filename):
+    def parse_file_names(self, filename):
         """Parse file names.
         
         Parse official MMS file names. MMS file names are formatted as
@@ -440,7 +464,7 @@ class MrMMS_SDC_API:
         return tuple(parts)
     
     
-    def Query(self):
+    def query(self):
         
         # Adjust end date
         #   - The query takes '%Y-%m-%d' but the object allows '%Y-%m-%dT%H:%M:%S'
@@ -502,7 +526,7 @@ class MrMMS_SDC_API:
         return local_names
     
     
-    def Search(self):
+    def search(self):
         """Search for files locally and at the SDC.
         
         TODO:
@@ -516,14 +540,14 @@ class MrMMS_SDC_API:
         
         # Search locally if offline
         if self.offline:
-            local_files = self.Local_FileNames()
+            local_files = self.local_file_names()
             remote_files = []
         
         # Search remote first
         #   - SDC is definitive source of files
         #   - Returns most recent version
         else:
-            remote_files = self.FileNames()
+            remote_files = self.file_names()
             
             # Search for the equivalent local file names
             local_files = self.remote2localnames(remote_files)
@@ -542,73 +566,11 @@ class MrMMS_SDC_API:
         return (local_files, remote_files)
     
     
-    def VersionInfo(self):
+    def version_info(self):
         """Obtain version information from the SDC."""
         self._info_type = 'version_info'
-        response = self.Get()
+        response = self.get()
         return response.json()
-    
-    
-    @property
-    def site(self):
-        return self._site
-    
-    @site.setter
-    def site(self, value):
-        if (value == 'team') | (value == 'team_site') | (value == 'sitl') | (value == 'private'):
-            self._site = 'sitl'
-        elif (value == 'public') | (value == 'public_site'):
-            self._site = 'public'
-        else:
-            raise ValueError('Invalid value for the "site" attribute')
-    
-    @property
-    def start_date(self):
-        if isinstance(self._start_date, dt.datetime):
-            theDate = self._start_date.isoformat()
-        else:
-            theDate = self._start_date
-        
-        return theDate
-    
-    @start_date.setter
-    def start_date(self, value):
-        # Convert string to datetime object
-        if isinstance(value, str):
-            try:
-                value = dt.datetime.strptime(value[0:19], '%Y-%m-%dT%H:%M:%S')
-            except:
-                try:
-                    value = dt.datetime.strptime(value, '%Y-%m-%d')
-                except:
-                    ValueError('Invalid format for attribute start_date.')
-        
-        self._start_date = value
-    
-    
-    @property
-    def end_date(self):
-        if isinstance(self._end_date, dt.datetime):
-            theDate = self._end_date.isoformat()
-        else:
-            theDate = self._end_date
-        
-        return theDate
-    
-    
-    @end_date.setter
-    def end_date(self, value):
-        # Convert string to datetime object
-        if isinstance(value, str):
-            try:
-                value = dt.datetime.strptime(value[0:19], '%Y-%m-%dT%H:%M:%S')
-            except:
-                try:
-                    value = dt.datetime.strptime(value, '%Y-%m-%d')
-                except:
-                    ValueError('Invalid format for attribute start_date.')
-        
-        self._end_date = value
 
 
 if __name__ == '__main__':
