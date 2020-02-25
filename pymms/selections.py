@@ -1,7 +1,9 @@
 import pathlib
-import datetime as dt
-import numpy as np
 import re
+import csv
+import datetime as dt
+from astropy.constants import R_earth
+import numpy as np
 from . import mrmms_sdc_api as sdc
 from cdflib import cdfread, epochs
 import matplotlib.pyplot as plt
@@ -10,7 +12,7 @@ from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 tai_1958 = epochs.CDFepoch.compute_tt2000([1958, 1, 1, 0, 0, 0, 0, 0, 0])
 
 class BurstSegment:
-    def __init__(self, fom, tstart, tstop, discussion,
+    def __init__(self, tstart, tstop, fom, discussion,
                  sourceid=None, file=None):
         '''
         Create an object representing a burst data segment.
@@ -56,16 +58,16 @@ class BurstSegment:
         self.tstop = tstop
 
     def __str__(self):
-        return '{0}   {1}   {2:3.0f}   {3:>8}   {4}'.format(
-            self.tstart, self.tstop, self.fom, self.sourceid, self.discussion
+        return '{0}   {1}   {2:3.0f}   {3}'.format(
+            self.tstart, self.tstop, self.fom, self.discussion
             )
 
     def __repr__(self):
-        return 'selections.BurstSegment({0}, {1}, {2:3.0f}, {3}, {4})'.format(
-            self.tstart, self.tstop, self.fom, self.sourceid, self.discussion
+        return 'selections.BurstSegment({0}, {1}, {2:3.0f}, {3})'.format(
+            self.tstart, self.tstop, self.fom, self.discussion
             )
-
-    def file_start_time(self):
+    
+    def file_start_time(self, fmt='%Y-%m-%d-%H-%M-%S'):
         '''
         Extract the time from the burst selection file name.
 
@@ -75,7 +77,7 @@ class BurstSegment:
              the file start time as `datetime.datetime`
         '''
         return dt.datetime.strptime(self.file.stem.split('_')[-1],
-                                    '%Y-%m-%d-%H-%M-%S'
+                                    fmt
                                     )
 
     @staticmethod
@@ -86,22 +88,14 @@ class BurstSegment:
                 ]
 
     @classmethod
-    def tai_to_datetime(cls, t):
-        tepoch  = epochs.CDFepoch()
-        return tepoch.to_datetime(t * int(1e9) + tai_1958)
-
-    @classmethod
     def datetime_to_tai(cls, t):
         t_list = cls.datetime_to_list(t)
         return int((epochs.CDFepoch.compute_tt2000(t_list) - tai_1958) // 1e9)
 
-    @property
-    def taistarttime(self):
-        return self.__class__.datetime_to_tai(self.tstart)
-
-    @property
-    def taiendtime(self):
-        return self.__class__.datetime_to_tai(self.tstop)
+    @classmethod
+    def tai_to_datetime(cls, t):
+        tepoch  = epochs.CDFepoch()
+        return tepoch.to_datetime(t * int(1e9) + tai_1958)
 
     @property
     def start_time(self):
@@ -111,21 +105,477 @@ class BurstSegment:
     def stop_time(self):
         return self.tstop.strftime('%Y-%m-%d %H:%M:%S')
 
+    @property
+    def taistarttime(self):
+        return self.__class__.datetime_to_tai(self.tstart)
 
-def sort(data):
+    @property
+    def taiendtime(self):
+        return self.__class__.datetime_to_tai(self.tstop)
+
+
+def _burst_data_segments_to_burst_segment(data):
     '''
-    Sort abs, sitl, or gls selections into ascending order.
+    Turn selections created by `MrMMS_SDC_API.burst_data_segements` and turn
+    them into `BurstSegment` instances.
+    
+    Parameters
+    ----------
+    data : dict
+        Data associated with each burst segment
+    
+    Returns
+    -------
+    result : list of `BurstSegment`
+        Data converted to `BurstSegment` instances
+    '''
+    # Look at createtime and finishtime keys to see if either can
+    # substitute for a file name time stamp
+    result = []
+    for tstart, tend, fom, discussion, sourceid in \
+        zip(data['tstart'], data['tstop'], data['fom'],
+            data['discussion'], data['fom']
+            ):
+        result.append(BurstSegment(tstart, tend, fom, discussion,
+                                   sourceid=sourceid)
+                      )
+    return result
+
+
+def _get_selections(type, start, stop,
+                    sort=True, combine=True, unique=True,
+                    re_filter=None):
+    '''
+    Creator function for burst selections. See `selections`.
+    '''
+    if type not in ('abs', 'abs-all', 'sitl', 'sitl+back',
+                    'gls', 'mp-dl-unh'
+                    ):
+        raise ValueError('Invalid selections type {}'.format(type))
+    
+    # Get the selections
+    data = sdc.mission_data(type, start, stop)
+    
+    # Turn the data into BurstSegments. Adjacent segments returned
+    # by `sdc.sitl_selections have a 0 second gap between stop and
+    # start times. Those returned by `sdc.burst_data_segments` are
+    # separated by 10 seconds.
+    if type in ('abs-all', 'sitl', 'gls', 'mp-dl-unh'):
+        delta_t = 0.0
+        converter = _sitl_selections_to_burst_segment
+    elif type in ('abs', 'sitl+back'):
+        delta_t = 10.0
+        unique = False  # No files (however, there are create times...)
+        converter = _burst_data_segments_to_burst_segment
+    else:
+        raise ValueError('Invalid selections type {}'.format(type))
+    
+    # Convert data into BurstSegments
+    data = converter(data)
+    
+    # Curate the data
+    if sort:
+        data = sort_segments(data)
+    if combine:
+        combine_segments(data, delta_t=delta_t)
+    if unique:
+        data = remove_duplicate_segments(data)
+    if re_filter is not None:
+        data = filter_segments(data, re_filter)
+    
+    return data
+
+
+def _mission_events_to_burst_segment(data):
+    '''
+    Turn selections created by `MrMMS_SDC_API.mission_events` and turn
+    them into `BurstSegment` instances.
+    
+    Parameters
+    ----------
+    data : dict
+        Data associated with each burst segment
+    
+    Returns
+    -------
+    result : list of `BurstSegment`
+        Data converted to `BurstSegment` instances
+    '''
+    raise NotImplementedError
+
+
+def _sitl_selections_to_burst_segment(data):
+    '''
+    Turn selections created by `MrMMS_SDC_API.sitl_selections` and turn
+    them into `BurstSegment` instances.
+    
+    Parameters
+    ----------
+    data : dict
+        Data associated with each burst segment
+    
+    Returns
+    -------
+    result : list of `BurstSegment`
+        Data converted to `BurstSegment` instances
+    '''
+    result = []
+    for tstart, tend, fom, discussion, sourceid, file in \
+        zip(data['tstart'], data['tstop'], data['fom'],
+            data['discussion'], data['fom'], data['file']
+            ):
+        result.append(BurstSegment(tstart, tend, fom, discussion,
+                                   sourceid=sourceid, file=file)
+                      )
+    return result
+
+
+def combine_segments(data, delta_t=0):
+    '''
+    Combine contiguous burst selections into single selections.
+
+    Parameters
+    ----------
+    data : list of `BurstSegment`
+        Selections to be combined.
+    delta_t : int
+        Time interval between adjacent selections. For selections
+        returned by `pymms.sitl_selections()`, this is 0. For selections
+        returned by `pymms.burst_data_segment()`, this is 10.
+    '''
+    # Any time delta > delta_t sec indicates the end of a contiguous interval
+    t_deltas = [(seg1.tstart - seg0.tstop).total_seconds()
+                for seg1, seg0 in zip(data[1:], data[:-1])
+                ]
+    t_deltas.append(1000)
+    icontig = 0  # Current contiguous interval
+    result = []
+
+    # Check if adjacent elements are continuous in time
+    #   - Use itertools.islice to select start index without copying array
+    for idx, t_delta in enumerate(t_deltas):
+        # Contiguous segments are separated by delta_t seconds
+        if t_delta == delta_t:
+            # And unique segments have the same fom and discussion
+            if (data[icontig].fom == data[idx+1].fom) and \
+                    (data[icontig].discussion == data[idx+1].discussion):
+                continue
+
+        # End of a contiguous interval
+        data[icontig].tstop = data[idx].tstop
+
+        # Next interval
+        icontig = icontig + 1
+
+        # Move data for new contiguous segments to beginning of array
+        try:
+            data[icontig] = data[idx+1]
+        except IndexError:
+            pass
+
+    # Truncate data beyond last contiguous interval
+    del data[icontig:]
+
+
+def filter_segments(data, re_filter):
+    '''
+    Filter burst selections by their discussion string.
 
     Parameters
     ----------
     data : dict
-        Selections to be sorted. Must have keys 'start_time', 'end_time',
-        'fom', 'discussion', 'tstart', and 'tstop'.
+        Selections to be combined. Must have key 'discussion'.
     '''
-    return sorted(data, key=lambda x: x.tstart)
+    return [seg for seg in data if re.search(re_filter, seg.discussion)]
 
 
-def remove_duplicates(data):
+def metric(figtype=None):
+    starttime = dt.datetime(2019, 10, 17)
+
+    # Find SROI
+    #start_date, end_date = gls_get_sroi(starttime)
+    start_date = dt.datetime(2019, 10, 19)
+    #end_date = start_date + dt.timedelta(days=5)
+    end_date = dt.datetime.now()
+
+    # Grab selections
+    abs_files = sdc.sitl_selections('abs_selections',
+                                    start_date=start_date, end_date=end_date)
+    gls_files = sdc.sitl_selections('gls_selections', gls_type='mp-dl-unh',
+                                    start_date=start_date, end_date=end_date)
+
+    # Read the files
+    abs_data = sdc.read_selections(abs_files)
+    sitl_data = sdc.burst_data_segments(start_date, end_date)
+    gls_data = sdc.read_selections(gls_files)
+
+    # ABS, SITL, and GLS files/data are often duplicated,
+    # out of order, and/or split into smaller chunks. We
+    # want to take only unique, aggregate selections.
+    abs_data = sort(abs_data)
+    abs_data = remove_duplicates(abs_data)
+    combine(abs_data)
+
+    sitl_data = sort(sitl_data)
+    combine(sitl_data, delta_t=10)
+    mp_data = re_filter(sitl_data, '(MP|Magnetopause)')
+
+    gls_data = sort(gls_data)
+    gls_data = remove_duplicates(gls_data)
+    combine(gls_data)
+
+    # Find overlap between GLS and SITL
+    gls_sitl = []
+    for segment in gls_data:
+        if (segment.tstart <= sitl_data[-1].tstop) & \
+                (segment.tstop >= sitl_data[0].tstart):
+            gls_sitl.append(selection_overlap(segment, sitl_data))
+
+    # Find overlap between SITL MP Crossings and GLS
+    sitl_mp_gls = []
+    for segment in mp_data:
+        if (segment.tstart <= gls_data[-1].tstop) & \
+                (segment.tstop >= gls_data[0].tstart):
+            sitl_mp_gls.append(selection_overlap(segment, gls_data))
+
+    # Find overlap between GLS and SITL MP
+    gls_sitl_mp = []
+    for segment in gls_data:
+        if (segment.tstart <= mp_data[-1].tstop) & \
+                (segment.tstop >= mp_data[0].tstart):
+            gls_sitl_mp.append(selection_overlap(segment, mp_data))
+
+    # Find overlap between ABS and SITL
+    abs_sitl = []
+    for segment in abs_data:
+        if (segment.tstart <= sitl_data[-1].tstop) & \
+                (segment.tstop >= sitl_data[0].tstart):
+            abs_sitl.append(selection_overlap(segment, sitl_data))
+
+    # Find overlap between SITL MP and ABS
+    sitl_mp_abs = []
+    for segment in mp_data:
+        if (segment.tstart <= abs_data[-1].tstop) & \
+                (segment.tstop >= abs_data[0].tstart):
+            sitl_mp_abs.append(selection_overlap(segment, abs_data))
+
+    # Find overlap between SITL and ABS
+    sitl_abs = []
+    for segment in sitl_data:
+        if (segment.tstart <= abs_data[-1].tstop) & \
+                (segment.tstop >= abs_data[0].tstart):
+            sitl_abs.append(selection_overlap(segment, abs_data))
+
+    # Aggregate results
+    gls_sitl_selected = sum(selection['n_selections'] > 0 for selection in gls_sitl)
+    sitl_mp_gls_selected = sum(selection['n_selections'] > 0 for selection in sitl_mp_gls)
+    gls_sitl_mp_selected = sum(selection['n_selections'] > 0 for selection in gls_sitl_mp)
+    abs_sitl_selected = sum(selection['n_selections'] > 0 for selection in abs_sitl)
+    sitl_mp_abs_selected = sum(selection['n_selections'] > 0 for selection in sitl_mp_abs)
+    sitl_abs_selected = sum(selection['n_selections'] > 0 for selection in sitl_abs)
+
+    gls_sitl_pct_selected = gls_sitl_selected / len(gls_sitl) * 100.0
+    sitl_mp_gls_pct_selected = sitl_mp_gls_selected / len(sitl_mp_gls) * 100.0
+    gls_sitl_mp_pct_selected = gls_sitl_mp_selected / len(gls_sitl_mp) * 100.0
+    abs_sitl_pct_selected = abs_sitl_selected / len(abs_sitl) * 100.0
+    sitl_mp_abs_pct_selected = sitl_mp_abs_selected / len(sitl_mp_abs) * 100.0
+    sitl_abs_pct_selected = sitl_abs_selected / len(sitl_abs) * 100.0
+
+    gls_sitl_pct_overlap = [selection['pct_overlap'] for selection in gls_sitl]
+    sitl_mp_gls_pct_overlap = [selection['pct_overlap'] for selection in sitl_mp_gls]
+    gls_sitl_mp_pct_overlap = [selection['pct_overlap'] for selection in gls_sitl_mp]
+    abs_sitl_pct_overlap = [selection['pct_overlap'] for selection in abs_sitl]
+    sitl_mp_abs_pct_overlap = [selection['pct_overlap'] for selection in sitl_mp_abs]
+    sitl_abs_pct_overlap = [selection['pct_overlap'] for selection in sitl_abs]
+
+    # Create a figure
+    fig = plt.figure(figsize=(8.5,7))
+    fig.subplots_adjust(hspace=0.65, wspace=0.4)
+
+    # GLS-SITL selections
+    ax = fig.add_subplot(3, 2, 1)
+    hh = ax.hist(gls_sitl_pct_overlap, bins=20, range=(0, 100))
+    ax.set_xlabel('% Overlap Between GLS and SITL Segment')
+    ax.set_ylabel('Occurrence')
+    ax.text(0.5, 0.98, '{0:4.1f}% of {1:d}'
+              .format(gls_sitl_pct_selected, len(gls_sitl)),
+              verticalalignment='top', horizontalalignment='center',
+              transform=ax.transAxes)
+    ax.set_title('GLS Segments Selected by SITL')
+
+    # SITL MP-GSL selections
+    ax = fig.add_subplot(3, 2, 3)
+    hh = ax.hist(sitl_mp_gls_pct_overlap, bins=20, range=(0, 100))
+    ax.set_xlabel('% Overlap Between SITL and GLS Segment')
+    ax.set_ylabel('Occurrence')
+    ax.text(0.5, 0.98, '{0:4.1f}% of {1:d}'
+              .format(sitl_mp_gls_pct_selected, len(sitl_mp_gls)),
+              verticalalignment='top', horizontalalignment='center',
+              transform=ax.transAxes)
+    ax.set_title('SITL MP Segments Selected by GLS')
+
+    # GLS-SITL MP selections
+    ax = fig.add_subplot(3, 2, 5)
+    hh = ax.hist(gls_sitl_mp_pct_overlap, bins=20, range=(0, 100))
+    ax.set_xlabel('% Overlap Between GLS and SITL Segment')
+    ax.set_ylabel('Occurrence')
+    ax.text(0.5, 0.98, '{0:4.1f}% of {1:d}'
+            .format(gls_sitl_mp_pct_selected, len(gls_sitl_mp)),
+            verticalalignment='top', horizontalalignment='center',
+            transform=ax.transAxes)
+    ax.set_title('GLS Segments Selected by SITL MP')
+
+    # ABS-SITL selections
+    ax = fig.add_subplot(3, 2, 2)
+    hh = ax.hist(abs_sitl_pct_overlap, bins=20, range=(0, 100))
+    ax.set_xlabel('% Overlap Between ABS and SITL Segment')
+    ax.set_ylabel('Occurrence')
+    ax.text(0.5, 0.98, '{0:4.1f}% of {1:d}'
+            .format(abs_sitl_pct_selected, len(abs_sitl)),
+            verticalalignment='top', horizontalalignment='center',
+            transform=ax.transAxes)
+    ax.set_title('ABS Segments Selected by SITL')
+
+    # SITL MP-ABS selections
+    ax = fig.add_subplot(3, 2, 4)
+    hh = ax.hist(sitl_mp_abs_pct_overlap, bins=20, range=(0, 100))
+    ax.set_xlabel('% Overlap Between SITL and ABS Segment')
+    ax.set_ylabel('Occurrence')
+    ax.text(0.5, 0.98, '{0:4.1f}% of {1:d}'
+            .format(sitl_mp_abs_pct_selected, len(sitl_mp_abs)),
+            verticalalignment='top', horizontalalignment='center',
+            transform=ax.transAxes)
+    ax.set_title('SITL MP Segments Selected by ABS')
+
+    # SITL-ABS selections
+    ax = fig.add_subplot(3, 2, 6)
+    hh = ax.hist(sitl_abs_pct_overlap, bins=20, range=(0, 100))
+    ax.set_xlabel('% Overlap Between SITL and ABS Segment')
+    ax.set_ylabel('Occurrence')
+    ax.text(0.5, 0.98, '{0:4.1f}% of {1:d}'
+            .format(sitl_abs_pct_selected, len(sitl_abs)),
+            verticalalignment='top', horizontalalignment='center',
+            transform=ax.transAxes)
+    ax.set_title('SITL Segments Selected by ABS')
+    
+    # Save the figure
+    if figtype is not None:
+        filename = (output_dir
+                    / '_'.join(('selections_metric',
+                                start_date.strftime('%Y%m%d%H%M%S'),
+                                end_date.strftime('%Y%m%d%H%M%S')
+                                )))
+        filename = filename.with_suffix('.' + figtype)
+        plt.savefig(filename.expanduser())
+    
+    plt.show()
+
+
+def print_selections(data):
+    '''
+    Print details of the burst selections.
+
+    Parameters
+    ----------
+    data : `BurstSegment` or list of `BurstSegment`
+        Selections to be printed. Must have keys 'tstart', 'tstop',
+        'fom', 'sourceid', and 'discussion'
+    '''
+    print('{0:>19}   {1:>19}   {2}   {3}'
+          .format('TSTART', 'TSTOP', 'FOM', 'DISCUSSION')
+          )
+
+    if isinstance(data, list):
+        for selection in data:
+            print(selection)
+    else:
+        print(data)
+
+
+def read_csv(filename, start_time=None, stop_time=None, header=True):
+    '''
+    Read a CSV file with burst segment selections.
+    
+    Parameters
+    ----------
+    filename : str
+        The name of the file to which `data` is to be read
+    start_time : str or `datetime.datetime`
+        Filter results to contain segments selected on or
+        after this time. Possible only if `header` is True
+        and if a column is named `'start_time'`
+    stop_time : str or `datetime.datetime`
+        Filter results to contain segments selected on or
+        before this time. Possible only if `header` is True
+        and if a column is named `'stop_time'`
+    header : bool
+        If `True`, the csv file has a header indicating the
+        names of each column. The file is expected to contain
+        the columns `'start_time'`, `'stop_time'`, `'fom'`,
+        and `'discussion'`. If `header` is `False`, these are
+        the assumed column names.
+    
+    Returns
+    -------
+    data : list of `BurstSegment`
+        Burst segments read from the csv file
+    '''
+    # Convert time itnerval to datetimes if needed
+    if isinstance(start_time, str):
+        start_time = dt.datetime.strptime(start_time, '%Y-%m-%d %H:%M:%S')
+    if isinstance(stop_time, str):
+        stop_time = dt.datetime.strptime(stop_time, '%Y-%m-%d %H:%M:%S')
+    
+    file = pathlib.Path(filename)
+    required_keys = ('start_time', 'stop_time', 'fom', 'discussion')
+    data = []
+            
+    # Read the file
+    with open(file.expanduser(), 'r', newline='') as csvfile:
+        csvreader = csv.reader(csvfile)
+        
+        # Take column names from file header
+        if header:
+            header = next(csvreader)
+            if not all([required_key in header 
+                        for required_key in required_keys]):
+                ValueError('Header does not contain some required keys.')
+        else:
+            header = required_keys
+            
+        # Read the rows
+        for row in csvreader:
+            data_dict = {key: value for key, value in zip(header, row)}
+            
+            # Select the data within the time interval
+            if start_time is not None:
+                tstart = dt.datetime.strptime(data_dict['start_time'],
+                                              '%Y-%m-%d %H:%M:%S')
+                if tstart < start_time:
+                    continue
+            if stop_time is not None:
+                tstop = dt.datetime.strptime(data_dict['start_time'],
+                                             '%Y-%m-%d %H:%M:%S')
+                if tstop > stop_time:
+                    continue  # BREAK if sorted!!
+            
+            # Initialize segment with required fields then add
+            # additional fields after
+            segment = BurstSegment(data_dict.pop('start_time'),
+                                   data_dict.pop('stop_time'),
+                                   float(data_dict.pop('fom')),
+                                   data_dict.pop('discussion'),
+                                   file=filename
+                                   )
+            for key, value in data_dict.items():
+                setattr(segment, key, value)
+            
+            data.append(segment)
+    
+    return data
+
+
+def remove_duplicate_segments(data):
     '''
     If SITL or GLS selections are submitted multiple times,
     there can be multiple copies of the same selection, or
@@ -173,115 +623,6 @@ def remove_duplicates(data):
     return result
 
 
-def combine(data, delta_t=0):
-    '''
-    Combine contiguous burst selections into single selections.
-
-    Parameters
-    ----------
-    data : list of `BurstSegment`
-        Selections to be combined.
-    delta_t : int
-        Time interval between adjacent selections. For selections
-        returned by `pymms.sitl_selections()`, this is 0. For selections
-        returned by `pymms.burst_data_segment()`, this is 10.
-    '''
-    # Any time delta > delta_t sec indicates the end of a contiguous interval
-    t_deltas = [(seg1.tstart - seg0.tstop).total_seconds()
-                for seg1, seg0 in zip(data[1:], data[:-1])
-                ]
-    t_deltas.append(1000)
-    icontig = 0  # Current contiguous interval
-    result = []
-
-    # Check if adjacent elements are continuous in time
-    #   - Use itertools.islice to select start index without copying array
-    for idx, t_delta in enumerate(t_deltas):
-        # Contiguous segments are separated by delta_t seconds
-        if t_delta == delta_t:
-            # And unique segments have the same fom and discussion
-            if (data[icontig].fom == data[idx+1].fom) and \
-                    (data[icontig].discussion == data[idx+1].discussion):
-                continue
-
-        # End of a contiguous interval
-        data[icontig].tstop = data[idx].tstop
-
-        # Next interval
-        icontig = icontig + 1
-
-        # Move data for new contiguous segments to beginning of array
-        try:
-            data[icontig] = data[idx+1]
-        except IndexError:
-            pass
-
-    # Truncate data beyond last contiguous interval
-    del data[icontig:]
-
-
-def re_filter(data, re_filter):
-    '''
-    Filter burst selections by their discussion string.
-
-    Parameters
-    ----------
-    data : dict
-        Selections to be combined. Must have key 'discussion'.
-    '''
-    return [seg for seg in data if re.search(re_filter, seg.discussion)]
-
-
-def print_selections(data):
-    '''
-    Print details of the burst selections.
-
-    Parameters
-    ----------
-    data : `BurstSegment` or list of `BurstSegment`
-        Selections to be printed. Must have keys 'tstart', 'tstop',
-        'fom', 'sourceid', and 'discussion'
-    '''
-    print('{0:>19}   {1:>19}   {2}   {3:>8}   {4}'
-          .format('TSTART', 'TSTOP', 'FOM', 'SOURCE', 'DISCUSSION')
-          )
-
-    if isinstance(data, list):
-        for selection in data:
-            print(selection)
-    else:
-        print(data)
-
-
-def get_sroi(start):
-
-    starttime = None
-    starttime = None
-    start_orbit = None
-    end_orbit = None
-
-    # Start of interval
-    if isinstance(start, dt.datetime):
-        starttime = start
-    elif isinstance(start, int):
-        start_orbit = start
-    else:
-        raise ValueError('start must be an int or datetime.')
-
-    # End of interval
-    if starttime is not None:
-        endtime = starttime + dt.timedelta(days=10)
-    elif start_orbit is not None:
-        end_orbit = start_orbit
-
-    # Get the SROI
-    sroi = sdc.mission_events(start_date=starttime, end_date=endtime,
-                              start_orbit=start_orbit, end_orbit=end_orbit,
-                              source='BDM', event_type='science_roi')
-
-    return sroi['tstart'][0], sroi['tend'][0]
-
-
 def selection_overlap(ref, tests):
     out = {'dt': ref.tstop - ref.tstart,
            'dt_next': dt.timedelta(days=7000),
@@ -319,237 +660,101 @@ def selection_overlap(ref, tests):
     return out
 
 
-def metric():
-    starttime = dt.datetime(2019, 10, 17)
-
-    # Find SROI
-    #start_date, end_date = gls_get_sroi(starttime)
-    start_date = dt.datetime(2019, 10, 19)
-    #end_date = start_date + dt.timedelta(days=5)
-    end_date = dt.datetime.combine(dt.date.today(), dt.time())
-
-    # Grab selections
-#    abs_files = sdc.sitl_selections('abs_selections',
-#                                    start_date=start_date, end_date=end_date)
-#    sitl_files = sdc.sitl_selections('sitl_selections',
-#                                     start_date=start_date, end_date=end_date)
-    gls_files = sdc.sitl_selections('gls_selections', gls_type='mp-dl-unh',
-                                    start_date=start_date, end_date=end_date)
-
-    # Read the files
-#    abs_data = sdc.read_selections_from_sav(abs_files)
-#    sitl_data = sdc.read_selections(sitl_files)
-    sitl_data = sdc.burst_data_segments(start_date, end_date)
-    gls_data = sdc.read_selections(gls_files)
-
-    # Take only the magnetopause crossings
-#    sitl_data = sort(sitl_data)
-#    sitl_data = remove_duplicates(sitl_data)
-    combine(sitl_data, delta_t=10)
-#    sitl_data = re_filter(sitl_data, '(MP|Magnetopause)')
-
-    gls_data = sort(gls_data)
-    gls_data = remove_duplicates(gls_data)
-    combine(gls_data)
-
-    # Find overlap between GLS and SITL
-    results = []
-    for segment in gls_data:
-        if (segment.tstart <= sitl_data[-1].tstop) & \
-                (segment.tstop >= sitl_data[0].tstart):
-            results.append(selection_overlap(segment, sitl_data))
-
-    # Aggregate results
-    total_selected = sum(result['n_selections'] > 0 for result in results)
-    pct_selected = total_selected / len(results) * 100.0
-    pct_overlap = [selection['pct_overlap'] for selection in results]
-
-    # Nearest selection
-    dt_offset = [result['dt_next'].total_seconds() for result in results if result['n_selections'] == 0]
-
-    # Create a figure
-    fig, axes = plt.subplots(nrows=1, ncols=2)
-
-    # Histogram selections
-    hh = axes[0].hist(pct_overlap, bins=25, range=(0, 125))
-    axes[0].set_xlabel('% Overlap Between GLS and SITL Segment')
-    axes[0].set_ylabel('Occurrence')
-    axes[0].set_title('{0:4.1f}% of {1:d} GLS Segments Also Selected by SITL'.format(pct_selected, total_selected))
-
-    # Histogram missed selections
-    hh = axes[1].hist(dt_offset,  bins=110, range=(0, 11000))
-    axes[1].set_xlabel('Offset from GLS to Closest SITL Selection (s)')
-    axes[1].set_ylabel('Occurrence')
-    axes[1].set_title('{0:4.1f}% of {1:d} GLS Segments Not Selected by SITL'.format(100-pct_selected, total_selected))
-    plt.show()
+def selections(type, start, stop,
+               sort=True, combine=True, unique=True,
+               re_filter=None):
+    '''
+    Factory function for burst data selections.
+    
+    Parameters
+    ----------
+    type : str
+        Type of burst data selections to retrieve. Options are 'abs',
+        'abs-all', 'sitl', 'sitl+back', 'gls', 'mp-dl-unh'.
+    start, stop : `datetime.datetime`
+        Interval over which to retrieve data
+    sort : bool
+        Sort burst segments by time. Submissions to the back structure and
+        multiple submissions or process executions in one SITL window can
+        cause multiples of the same selection or out-of-order selections.
+    combine : bool
+        Combine adjacent selection into one selection. Due to downlink
+        limitations, long time duration burst segments must be broken into
+        smaller chunks.
+    unique : bool
+        Return only unique segments. See `sort`. Also, a SITL may adjust
+        the time interval of their selections, so different submissions will
+        have duplicates selections but with different time stamps. This is
+        accounted for.
+    re_filter : str
+        Filter the burst segments by applying the regular expression to
+        the segment's discussions string.
+    
+    Returns
+    -------
+    results : list of `BurstSegment`
+        Each burst segment.
+    '''
+    return _get_selections(type, start, stop,
+                           sort=sort, combine=combine, unique=unique,
+                           re_filter=re_filter)
 
 
-def plot_context():
-    sc = 'mms1'
-    mode = 'srvy'
-    level = 'l2'
-    starttime = dt.datetime(2019, 10, 17)
+def sort_segments(data):
+    '''
+    Sort abs, sitl, or gls selections into ascending order.
 
-    # Find SROI
-    start_date, end_date = gls_get_sroi(starttime)
+    Parameters
+    ----------
+    data : dict
+        Selections to be sorted. Must have keys 'start_time', 'end_time',
+        'fom', 'discussion', 'tstart', and 'tstop'.
+    '''
+    return sorted(data, key=lambda x: x.tstart)
 
-    # Grab selections
-    abs_files = sdc.sitl_selections('abs_selections',
-                                    start_date=start_date, end_date=end_date)
-    sitl_files = sdc.sitl_selections('sitl_selections',
-                                     start_date=start_date, end_date=end_date)
-    gls_files = sdc.sitl_selections('gls_selections', gls_type='mp-dl-unh',
-                                    start_date=start_date, end_date=end_date)
 
-    # Read the files
-    abs_data = sdc.read_eva_fom_structure(abs_files[0])
-    sitl_data = sdc.read_eva_fom_structure(sitl_files[0])
-    gls_data = sdc.read_gls_csv(gls_files)
+def write_csv(filename, data,
+              fields=('start_time', 'stop_time', 'fom', 'discussion'),
+              append=False):
+    '''
+    Write a CSV file with burst data segment selections.
 
-    # SITL data time series
-    t_abs = []
-    x_abs = []
-    for tstart, tstop, fom in zip(abs_data['tstart'], abs_data['tstop'], abs_data['fom']):
-        t_abs.extend([tstart, tstart, tstop, tstop])
-        x_abs.extend([0, fom, fom, 0])
+    Parameters
+    ----------
+    data : list of `BurstSegment`
+        Burst segments to be written to the csv file
+    fields : tuple of str
+        Names of attributes for which the attribute value is to
+        be recorded in the file
+    filename : str
+        The name of the file to which `data` is to be written
+    append : bool
+        If True, `data` will be appended to the end of the file.
+    '''
+    required_keys = ('start_time', 'stop_time', 'fom', 'discussion')
+    if not all(required_key in fields for required_key in required_keys):
+        ValueError('fields is missing required elements.')
+    
+    mode = 'w'
+    if append:
+        mode = 'a'
+    
+    file = pathlib.Path(filename)
+    with open(file.expanduser(), mode, newline='') as csvfile:
+        csvwriter = csv.writer(csvfile)
+        
+        if not append:
+            csvwriter.writerow(fields)
+        
+        for segment in data:
+            csvwriter.writerow([getattr(segment, field)
+                                if field not in ('start_time', 'stop_time')
+                                else segment.start_time if field == 'start_time'
+                                else segment.stop_time
+                                for field in fields
+                                ]
+                               )
 
-    t_sitl = []
-    x_sitl = []
-    for tstart, tstop, fom in zip(sitl_data['tstart'], sitl_data['tstop'], sitl_data['fom']):
-        t_sitl.extend([tstart, tstart, tstop, tstop])
-        x_sitl.extend([0, fom, fom, 0])
-
-    t_gls = []
-    x_gls = []
-    for tstart, tstop, fom in zip(gls_data['tstart'], gls_data['tstop'], gls_data['fom']):
-        t_gls.extend([tstart, tstart, tstop, tstop])
-        x_gls.extend([0, fom, fom, 0])
-
-    # FGM
-    tepoch = epochs.CDFepoch()
-    t_vname = 'Epoch'
-    b_vname = '_'.join((sc, 'fgm', 'b', 'gse', mode, level))
-    api = sdc.MrMMS_SDC_API(sc, 'fgm', mode, level,
-                            start_date=start_date, end_date=end_date)
-    files = api.download_files()
-    t_fgm = np.empty(0, dtype='datetime64')
-    b_fgm = np.empty((0,4), dtype='float')
-    for file in files:
-        cdf = cdfread.CDF(file)
-        time = cdf.varget(t_vname)
-        t_fgm = np.append(t_fgm, tepoch.to_datetime(time, to_np=True), 0)
-        b_fgm = np.append(b_fgm, cdf.varget(b_vname), 0)
-
-    # FPI DIS
-    fpi_mode = 'fast'
-    api = sdc.MrMMS_SDC_API(sc, 'fpi', fpi_mode, level,
-                            optdesc='dis-moms',
-                            start_date=start_date, end_date=end_date)
-    files = api.download_files()
-    ti = np.empty(0, dtype='datetime64')
-    ni = np.empty(0)
-    espec_i = np.empty((0,32))
-    Ei = np.empty((0,32))
-    ti = np.empty(0)
-    t_vname = 'Epoch'
-    ni_vname = '_'.join((sc, 'dis', 'numberdensity', fpi_mode))
-    espec_i_vname = '_'.join((sc, 'dis', 'energyspectr', 'omni', fpi_mode))
-    Ei_vname = '_'.join((sc, 'dis', 'energy', fpi_mode))
-    for file in files:
-        cdf = cdfread.CDF(file)
-#        tepoch = epochs.CDFepoch()
-        time = cdf.varget(t_vname)
-        ti = np.append(ti, tepoch.to_datetime(time, to_np=True), 0)
-        ni = np.append(ni, cdf.varget(ni_vname), 0)
-        espec_i = np.append(espec_i, cdf.varget(espec_i_vname), 0)
-        Ei = np.append(Ei, cdf.varget(Ei_vname), 0)
-
-    # FPI DES
-    fpi_mode = 'fast'
-    api.optdesc = 'des-moms'
-    files = api.download_files()
-    te = np.empty(0, dtype='datetime64')
-    ne = np.empty(0)
-    espec_e = np.empty((0,32))
-    Ee = np.empty((0,32))
-    te = np.empty(0)
-    t_vname = 'Epoch'
-    ne_vname = '_'.join((sc, 'des', 'numberdensity', fpi_mode))
-    espec_e_vname = '_'.join((sc, 'des', 'energyspectr', 'omni', fpi_mode))
-    Ee_vname = '_'.join((sc, 'des', 'energy', fpi_mode))
-    for file in files:
-        cdf = cdfread.CDF(file)
-#        tepoch = epochs.CDFepoch()
-        time = cdf.varget(t_vname)
-        te = np.append(te, tepoch.to_datetime(time, to_np=True), 0)
-        ne = np.append(ne, cdf.varget(ne_vname), 0)
-        espec_e = np.append(espec_e, cdf.varget(espec_e_vname), 0)
-        Ee = np.append(Ee, cdf.varget(Ee_vname), 0)
-        cdf.close()
-
-    # Create the figure
-    fig, axes = plt.subplots(ncols=1, nrows=7, figsize=(8,9), sharex=True)
-
-    # Inset axes for colorbar
-    axins1 = inset_axes(axes[0],
-                    width="5%",
-                    height="80%",
-                    loc='right',
-                    bbox_to_anchor=(1.05, 0, 1, 1))
-    axins2 = inset_axes(axes[1],
-                    width="5%",
-                    height="80%",
-                    loc='right',
-                    bbox_to_anchor=(1.05, 0, 1, 1))
-
-    # FFT parameters -- resolve the oxygen gyrofrequency
-    im1 = axes[0].pcolormesh(np.tile(ti, (32, 1)).T, Ei, np.log10(espec_i), cmap='nipy_spectral')
-    axes[0].set_xticklabels([])
-    axes[0].set_ylabel('ion E\n(eV)')
-    axes[0].set_yscale('log')
-    cbar1 = fig.colorbar(im1, cax=axins1)
-    cbar1.set_label('Flux')
-    axes[0].set_title('{} SITL Selections'.format(sc.upper()))
-
-    im2 = axes[1].pcolormesh(np.tile(te, (32,1)).T, Ee, np.log10(espec_e), cmap='nipy_spectral')
-    axes[1].set_xticklabels([])
-    axes[1].set_ylabel('elec E\n(ev)')
-    axes[1].set_yscale('log')
-    cbar2 = fig.colorbar(im2, ax=axins2)
-    cbar2.set_label('Flux')
-
-    axes[2].plot(ti, ni, color='blue', label='Ni')
-    axes[2].plot(te, ne, color='red', label='Ne')
-    axes[2].set_xticklabels([])
-    axes[2].set_ylabel('N\n(cm^3)')
-
-    axes[3].plot(t_fgm, b_fgm, label=['Bx', 'By', 'Bz', '|B|'])
-    axes[3].set_xticklabels([])
-    axes[3].set_ylabel('B\n(nT)')
-#    L_items = axes[3].get_legend().get_texts()
-#    L_items[0].set_text('Bx')
-#    L_items[1].set_text('By')
-#    L_items[2].set_text('Bz')
-#    L_items[3].set_text('|B|')
-
-    axes[4].plot(t_abs, x_abs)
-    axes[4].set_xticklabels([])
-    axes[4].set_ylabel('ABS')
-
-    axes[5].plot(t_sitl, x_sitl)
-    axes[5].set_xticklabels([])
-    axes[5].set_ylabel('SITL')
-
-    axes[6].plot(t_gls, x_gls)
-    axes[6].set_ylabel('GLS')
-
-    plt.setp(axes[6].xaxis.get_majorticklabels(), rotation=45)
-
-    plt.show()
-
-    pdb.set_trace()
-
-    return
 
 if __name__ == 'main':
     from heliopy import config

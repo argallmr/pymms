@@ -980,7 +980,7 @@ def _response_text_to_dict(text):
 
         # See sitl_selections()
         if key.startswith(('start_time', 'end_time')):
-            match = re.search('((start|end)_time_utc)', key)
+            match = re.search('((start|end)_time)_utc', key)
             key = match.group(1)
 
         # See burst_data_segments()
@@ -1000,10 +1000,12 @@ def _response_text_to_dict(text):
 
 
 def burst_data_segments(start_date, end_date,
-                        combine=False, re_filter=None, team=False,
-                        username=None):
+                        team=False, username=None):
     """
-    Get information about burst data segments.
+    Get information about burst data segments. Burst segments that
+    were selected in the back structure are available through this
+    service, but not through `sitl_selections()`. Also, the time
+    between contiguous segments is 10 seconds.
 
     Parameters
     ----------
@@ -1011,11 +1013,6 @@ def burst_data_segments(start_date, end_date,
         Start date of time interval for which information is desired.
     end_date : `datetime`
         End date of time interval for which information is desired.
-    combine : bool=False
-        If true, contiguous burst intervals will be consolidated
-    re_filter : str
-        A regular expression used to filter results by the contents
-        of the discussion entry.
     team : bool=False
         If set, information will be taken from the team site
         (login required). Otherwise, it is take from the public site.
@@ -1080,7 +1077,6 @@ def burst_data_segments(start_date, end_date,
 
     # Get the log-in information
     sesh = requests.Session()
-#    sesh.auth = ('margall', 'MMSfields1!')
     r = sesh.get(url_path, params=query)
     if r.status_code != 200:
         raise ConnectionError('{}: {}'.format(r.status_code, r.reason))
@@ -1136,59 +1132,7 @@ def burst_data_segments(start_date, end_date,
     data['stop_time'] = [tend.strftime('%Y-%m-%d %H:%M:%S')
                          for tend in data['tstop']]
 
-    # Combine contiguous burst selections
-    if combine:
-        # Any time delta > 10s indicates the end of a contiguous interval
-        t_deltas = np.append(data['taistarttime'][1:] - data['taiendtime'][:-1], 1000)
-        icontig = 0  # Current contiguous interval
-
-        # Check if adjacent elements are continuous in time
-        #   - Use itertools.islice to select start index without copying array
-        for idx, t_delta in enumerate(t_deltas):
-
-            # Contiguous segments are separated by 10 seconds
-            if t_delta == 10:
-                # Keep only unique discussions
-                if data['discussion'][icontig] != data['discussion'][idx]:
-                    data['discussion'][icontig] += '; ' + data['discussion'][idx]
-
-                continue
-
-            # End of a contiguous interval
-            data['taiendtime'][icontig] = data['taiendtime'][idx]
-            data['finishtime'][icontig] = data['finishtime'][idx]
-            data['end_time'][icontig] = data['end_time'][idx]
-            data['tend'][icontig] = data['tend'][idx]
-            data['dt'][icontig] = data['dt'][idx]
-
-            # Next interval
-            icontig = icontig + 1
-
-            # Move data for new contiguous segments to beginning of array
-            if idx < len(t_deltas) - 1:
-                for key in data:
-                    data[key][icontig] = data[key][idx+1]
-
-        # Truncate data beyond last contiguous interval
-        for key in data:
-            data[key] = data[key][0:icontig]
-
-    # Filter burst selections by discussion text
-    if re_filter is not None:
-        ikeep = [idx for idx, text in enumerate(data['discussion'])
-                 if re.search(re_filter, text)
-                 ]
-        for key in data:
-            data[key] = [data[key][idx] for idx in ikeep]
-
-    result = []
-    for idx in range(len(data['tstart'])):
-        result.append(sel.BurstSegment(data['fom'][idx], data['tstart'][idx],
-                                       data['tstop'][idx], data['discussion'][idx],
-                                       sourceid='burst_data_segment'
-                                       ))
-
-    return result
+    return data
 
 
 def construct_file_names(*args, data_type='science', **kwargs):
@@ -1874,6 +1818,169 @@ def filter_version(files, latest=None, version=None, min_version=None):
     return filtered_files
 
 
+def mission_data(type, start, stop):
+    '''
+    A factory function for retrieving non-science data.
+    
+    Parameters
+    ----------
+    type : str
+        The type of data to retrieve. Options include:
+            Type       Source               Description
+            =========  ===================  =======================================
+            abs-all    sitl_selections      all ABS selections
+            abs        burst_data_segments  lightly curated ABS selections
+            sitl       sitl_selections      SITL selections
+            sitl+back  burst_data_segments  SITL and backstructure selections
+            gls        sitl_selections      ground loop selections from 'mp-dl-unh'
+            mp-dl-unh  sitl_selections      ground loop selections from 'mp-dl-unh'
+            sroi       mission_events       Science sub-regions of interest
+            =========  ===================  =======================================
+    start, stop : `datetime.datetime`
+        Time interval for which data is to be retrieved
+    
+    Returns
+    -------
+    data : struct
+        The requested data
+    '''
+    data_retriever = _get_mission_data(type)
+    return data_retriever(start, stop)
+        
+def _get_mission_data(type):
+    '''
+    Creator function for mission events data.
+    
+    Parameters
+    ----------
+    type : str
+        Type of data desired
+    
+    Returns
+    -------
+    func : function
+        Function to generate the data
+    '''
+    if type == 'abs':
+        return burst_data_segments
+    elif type == 'abs-all':
+        return _get_abs_data
+    elif type == 'sitl':
+        return _get_sitl_data
+    elif type == 'sitl+back':
+        return burst_data_segments
+    elif type in ('gls', 'mp-dl-unh'):
+        return _get_gls_data
+    elif type == 'sroi':
+        return _get_sroi
+    else:
+        raise ValueError('Mission data type {} not recognized'.format(type))
+
+
+def _get_abs_data(start, stop):
+    abs_files = sitl_selections('abs_selections',
+                                start_date=start, end_date=stop)
+    return _read_fom_structures(abs_files)
+
+
+def _get_sitl_data(start, stop):
+    sitl_files = sitl_selections('sitl_selections',
+                                 start_date=start, end_date=stop)
+
+
+def _get_gls_data(start, stop):
+    gls_files = sitl_selections('gls_selections', gls_type='mp-dl-unh',
+                                start_date=start, end_date=stop)
+    
+    return _read_fom_structures(gls_files)
+
+def _get_sroi(start, stop, sc=None):
+    return mission_events(start, stop, sc=sc,
+                          source='POC', event_type='SROI')
+
+def _read_fom_structures(files):
+    # Read data from all files
+    result = dict()
+    for file in files:
+        data = read_eva_fom_structure(file)
+        if data['valid'] == 0:
+            raise ValueError('Invalid fom structure. Investigate!')
+        
+        # Turn scalars into lists so they can be accumulated
+        # across multiple files.
+        #
+        # Keep track of file name because the same selections
+        # (or updated versions of the same selections) can be
+        # stored in multiple files, if they were submitted to
+        # the SDC multiple times.
+        if len(result) == 0:
+            result = {key:
+                      (value
+                       if isinstance(value, list)
+                       else [value])
+                      for key, value in data.items()
+                      }
+            result['file'] = [file] * len(data['fom'])
+        
+        # Append or extend data from subsequent files
+        else:
+            result['file'].extend([file] * len(data['fom']))
+            for key, value in data.items():
+                if isinstance(value, list):
+                    result[key].extend(value)
+                else:
+                    result[key].append(value)
+    
+    return result
+
+
+def _get_gls_data(start, stop):
+    gls_files = sitl_selections('gls_selections', gls_type='mp-dl-unh',
+                                start_date=start, end_date=stop)
+    
+    # Prepare to loop over files
+    if isinstance(gls_files, str):
+        gls_files = [gls_files]
+    
+    # Statistics of bad selections
+    fskip = 0  # number of files skipped
+    nskip = 0  # number of selections skipped
+    nexpand = 0  # number of selections expanded
+    result = dict()
+    
+    # Read multiple files
+    for file in gls_files:
+        data = read_gls_csv(file)
+        
+        # Accumulative sum of errors
+        fskip += data['errors']['fskip']
+        nskip += data['errors']['nskip']
+        nexpand += data['errors']['nexpand']
+        if data['errors']['fskip']:
+            continue
+        del data['errors']
+        
+        # Extend results from all files. Keep track of the file
+        # names since entries can change. The most recent file
+        # contains the correct selections information.
+        if len(result) == 0:
+            result = data
+            result['file'] = [file] * len(result['fom'])
+        else:
+            result['file'].extend([file] * len(result['fom']))
+            for key, value in data.items():
+                result[key].extend(value)
+    
+    # Display bad data
+    if (fskip > 0) | (nskip > 0) | (nexpand > 0):
+        print('Selection Adjustments:')
+        print('  # files skipped:    {}'.format(fskip))
+        print('  # entries skipped:  {}'.format(nskip))
+        print('  # entries expanded: {}'.format(nexpand))
+    
+    return result
+
+
 def mission_events(start_date=None, end_date=None,
                    start_orbit=None, end_orbit=None,
                    sc=None,
@@ -1914,8 +2021,8 @@ def mission_events(start_date=None, end_date=None,
     -------
     data : dict
         Information about each event.
-            start_time_utc - Start time of event %Y-%m-%dT%H:%M:%S.%f
-            end_time_utc   - End time of event %Y-%m-%dT%H:%M:%S.%f
+            start_time     - Start time (UTC) of event %Y-%m-%dT%H:%M:%S.%f
+            end_time       - End time (UTC) of event %Y-%m-%dT%H:%M:%S.%f
             event_type     - Type of event
             sc_id          - Spacecraft to which the event applies
             source         - Source of event
@@ -1951,7 +2058,7 @@ def mission_events(start_date=None, end_date=None,
 
     resp = requests.get(url, params=query)
     data = _response_text_to_dict(resp.text)
-
+    
     # Convert to useful types
     types = ['str', 'str', 'str', 'str', 'str', 'str', 'str',
              'int32', 'int32', 'str', 'int32']
@@ -1977,12 +2084,12 @@ def mission_events(start_date=None, end_date=None,
     data['tstart'] = [dt.datetime.strptime(
                           value, '%Y-%m-%dT%H:%M:%S.%f'
                           )
-                      for value in data['start_time_utc']
+                      for value in data['start_time']
                       ]
     data['tend'] = [dt.datetime.strptime(
                         value, '%Y-%m-%dT%H:%M:%S.%f'
                         )
-                    for value in data['end_time_utc']
+                    for value in data['end_time']
                     ]
 
     return data
@@ -2139,7 +2246,7 @@ def read_eva_fom_structure(sav_filename):
 
     d = {'valid': int(fomstr.valid[0]),
          'error': fomstr.error[0],
-         'algversion': fomstr.algversion[0],
+         'algversion': fomstr.algversion[0].decode('utf-8'),
          'sourceid': [x.decode('utf-8') for x in fomstr.sourceid[0]],
          'cyclestart': int(fomstr.cyclestart[0]),
          'numcycles': int(fomstr.numcycles[0]),
@@ -2162,9 +2269,9 @@ def read_eva_fom_structure(sav_filename):
          'fomslope': float(fomstr.fomslope[0]),
          'fomskew': float(fomstr.fomskew[0]),
          'fombias': float(fomstr.fombias[0]),
-         'metadatainfo': fomstr.metadatainfo[0],
-         'oldestavailableburstdata': fomstr.oldestavailableburstdata[0],
-         'metadataevaltime': fomstr.metadataevaltime[0]
+         'metadatainfo': fomstr.metadatainfo[0].decode('utf-8'),
+         'oldestavailableburstdata': fomstr.oldestavailableburstdata[0].decode('utf-8'),
+         'metadataevaltime': fomstr.metadataevaltime[0].decode('utf-8')
          }
     try:
         d['discussion'] = [x.decode('utf-8') for x in fomstr.discussion[0]]
@@ -2382,8 +2489,8 @@ def read_selections(filenames):
 
         # Create a sections object
         for idx in range(len(data['tstart'])):
-            result.append(sel.BurstSegment(data['fom'][idx], data['tstart'][idx],
-                                           data['tstop'][idx], data['discussion'][idx],
+            result.append(sel.BurstSegment(data['tstart'][idx], data['tstop'][idx],
+                                           data['fom'][idx], data['discussion'][idx],
                                            sourceid=data['sourceid'][idx],
                                            file=os.path.basename(filename),
                                            )
@@ -2512,8 +2619,9 @@ def sdc_login(username):
     return cookies
 
 
-def sitl_selections(data_type='abs_selections', gls_type=None,
-                    start_date=None, end_date=None):
+def sitl_selections(data_type='abs_selections',
+                    start_date=None, end_date=None,
+                    gls_type=None):
     """
     Download SITL selections from the SDC.
 
