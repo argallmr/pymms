@@ -1033,8 +1033,8 @@ def burst_data_segments(start_date, end_date,
             status          - Download status of the segment
             numevalcycles
             sourceid        - Username of SITL who selected the segment
-            createtime      - ? as datetime
-            finishtime      - ? as datetime
+            createtime      - Time the selections were submitted as datetime (?)
+            finishtime      - Time the selections were downlinked as datetime (?)
             obs1numbufs
             obs2numbufs
             obs3numbufs
@@ -1828,13 +1828,13 @@ def mission_data(type, start, stop):
         The type of data to retrieve. Options include:
             Type       Source               Description
             =========  ===================  =======================================
-            abs-all    sitl_selections      all ABS selections
-            abs        burst_data_segments  lightly curated ABS selections
+            abs        sitl_selections      ABS selections
             sitl       sitl_selections      SITL selections
             sitl+back  burst_data_segments  SITL and backstructure selections
             gls        sitl_selections      ground loop selections from 'mp-dl-unh'
             mp-dl-unh  sitl_selections      ground loop selections from 'mp-dl-unh'
             sroi       mission_events       Science sub-regions of interest
+            roi        mission_events       Science region of interest
             =========  ===================  =======================================
     start, stop : `datetime.datetime`
         Time interval for which data is to be retrieved
@@ -1862,8 +1862,6 @@ def _get_mission_data(type):
         Function to generate the data
     '''
     if type == 'abs':
-        return burst_data_segments
-    elif type == 'abs-all':
         return _get_abs_data
     elif type == 'sitl':
         return _get_sitl_data
@@ -1995,18 +1993,14 @@ def mission_events(start_date=None, end_date=None,
 
     Parameters
     ----------
-    start_date : `datetime`
-        Start date of time interval for which information is desired.
-    end_date : `datetime`
-        End date of time interval for which information is desired.
-    start_orbit : `datetime`
-        Start date of data interval for which information is desired.
-        If provided with start_date, the two must overlap for any data
-        to be returned.
-    end_orbit : `datetime`
-        End orbit of data interval for which information is desired.
-        If provided with end_date, the two must overlap for any data
-        to be returned.
+    start_date, end_date : `datetime.datetime`
+        Start and end date of time interval. The interval is right-
+        exclusive: [start_date, end_date). The time interval must
+        encompass the desired data (e.g. orbit begin and end times)
+        for it to be returned.
+    start_orbit, end_orbit : `datetime.datetime`
+        Start and end orbit of data interval. If provided with `start_date`
+        or `end_date`, the two must overlap for any data to be returned.
     sc : str
         Spacecraft ID (mms, mms1, mms2, mms3, mms4) for which event
         information is to be returned.
@@ -2340,6 +2334,7 @@ def read_eva_fom_structure(sav_filename):
     d['stop_time'] = [t.strftime('%Y-%m-%d %H:%M:%S') for t in tstop]
     d['tstart'] = tstart
     d['tstop'] = tstop
+    d['createtime'] = [file_start_time(sav_filename)] * d['nsegs']
 
     return d
 
@@ -2360,7 +2355,7 @@ def read_gls_csv(filename):
     """
     # Dictionary to hold data from csv file
     keys = ['start_time', 'stop_time', 'sourceid', 'fom', 'discussion',
-            'taistarttime', 'taiendtime', 'tstart', 'tstop']
+            'taistarttime', 'taiendtime', 'tstart', 'tstop', 'createtime']
     data = {key: [] for key in keys}
 
     # CSV files have their generation time in the file name.
@@ -2378,6 +2373,8 @@ def read_gls_csv(filename):
     nentry_skip = 0
     nentry_expand = 0
     with open(filename) as f:
+        fstart = file_start_time(filename)
+        
         reader = csv.reader(f)
         for row in reader:
             tstart = dt.datetime.strptime(
@@ -2425,6 +2422,7 @@ def read_gls_csv(filename):
             data['discussion'].append(','.join(row[3:]))
             data['tstart'].append(tstart)
             data['tstop'].append(tstop)
+            data['createtime'].append(fstart)
 
         # Source ID is the name of the GLS model
         parts = parse_file_name(filename)
@@ -2437,72 +2435,6 @@ def read_gls_csv(filename):
                           }
 
     return data
-
-
-def read_selections(filenames):
-    '''
-    Read SITL, ABS, or GLS selections from their IDL sav or csv files.
-
-    Parameters
-    ----------
-    filenames : str, list of str
-        Names of the files to be read
-
-    Returns
-    -------
-    data : list of `BurstSegment`
-        Burst selection data.
-    '''
-    if isinstance(filenames, str):
-        filenames = [filenames]
-
-    fskip = 0
-    nskip = 0
-    nexpand = 0
-
-    # Read all files
-    result = []
-    for filename in filenames:
-        file, ext = os.path.splitext(filename)
-
-        # SAV files
-        if ext == '.sav':
-            data = read_eva_fom_structure(filename)
-            if data['valid'] == 0:
-                raise ValueError('Invalid fom structure. Investigate!')
-
-        # CSV files
-        elif ext == '.csv':
-            data = read_gls_csv(filename)
-
-            fskip += data['errors']['fskip']
-            nskip += data['errors']['nskip']
-            nexpand += data['errors']['nexpand']
-
-            if data['errors']['fskip']:
-                continue
-
-        # Other file type
-        else:
-            raise ValueError('Files must be only '
-                             '.sav or .csv, not {}.'.format(ext))
-
-        # Create a sections object
-        for idx in range(len(data['tstart'])):
-            result.append(sel.BurstSegment(data['tstart'][idx], data['tstop'][idx],
-                                           data['fom'][idx], data['discussion'][idx],
-                                           sourceid=data['sourceid'][idx],
-                                           file=os.path.basename(filename),
-                                           )
-                          )
-
-    if (fskip > 0) | (nskip > 0) | (nexpand > 0):
-        print('Selection Adjustments:')
-        print('  # files skipped:    {}'.format(fskip))
-        print('  # entries skipped:  {}'.format(nskip))
-        print('  # entries expanded: {}'.format(nexpand))
-
-    return result
 
 
 def _sdc_parse_form(r):

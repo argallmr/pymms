@@ -13,7 +13,7 @@ tai_1958 = epochs.CDFepoch.compute_tt2000([1958, 1, 1, 0, 0, 0, 0, 0, 0])
 
 class BurstSegment:
     def __init__(self, tstart, tstop, fom, discussion,
-                 sourceid=None, file=None):
+                 sourceid=None, createtime=None):
         '''
         Create an object representing a burst data segment.
 
@@ -47,38 +47,22 @@ class BurstSegment:
         elif isinstance(tstop, int):
             tstop = self.__class__.tai_to_datetime(tstop)
 
-        if file is not None:
-            file = pathlib.Path(file)
-
         self.discussion = discussion
-        self.file = file
+        self.createtime = createtime
         self.fom = fom
         self.sourceid = sourceid
         self.tstart = tstart
         self.tstop = tstop
 
     def __str__(self):
-        return '{0}   {1}   {2:3.0f}   {3}'.format(
-            self.tstart, self.tstop, self.fom, self.discussion
-            )
+        return ('{0}   {1}   {2:3.0f}   {3}'
+                .format(self.tstart, self.tstop, self.fom, self.discussion)
+                )
 
     def __repr__(self):
-        return 'selections.BurstSegment({0}, {1}, {2:3.0f}, {3})'.format(
-            self.tstart, self.tstop, self.fom, self.discussion
-            )
-    
-    def file_start_time(self, fmt='%Y-%m-%d-%H-%M-%S'):
-        '''
-        Extract the time from the burst selection file name.
-
-        Returns
-        -------
-        start_time : str
-             the file start time as `datetime.datetime`
-        '''
-        return dt.datetime.strptime(self.file.stem.split('_')[-1],
-                                    fmt
-                                    )
+        return ('selections.BurstSegment({0}, {1}, {2:3.0f}, {3})'
+                .format(self.tstart, self.tstop, self.fom, self.discussion)
+                )
 
     @staticmethod
     def datetime_to_list(t):
@@ -132,19 +116,20 @@ def _burst_data_segments_to_burst_segment(data):
     # Look at createtime and finishtime keys to see if either can
     # substitute for a file name time stamp
     result = []
-    for tstart, tend, fom, discussion, sourceid in \
+    for tstart, tend, fom, discussion, sourceid, createtime in \
         zip(data['tstart'], data['tstop'], data['fom'],
-            data['discussion'], data['fom']
+            data['discussion'], data['sourceid'], data['createtime']
             ):
         result.append(BurstSegment(tstart, tend, fom, discussion,
-                                   sourceid=sourceid)
+                                   sourceid=sourceid,
+                                   createtime=createtime)
                       )
     return result
 
 
 def _get_selections(type, start, stop,
                     sort=True, combine=True, unique=True,
-                    re_filter=None):
+                    filter=None):
     '''
     Creator function for burst selections. See `selections`.
     '''
@@ -165,7 +150,6 @@ def _get_selections(type, start, stop,
         converter = _sitl_selections_to_burst_segment
     elif type in ('abs', 'sitl+back'):
         delta_t = 10.0
-        unique = False  # No files (however, there are create times...)
         converter = _burst_data_segments_to_burst_segment
     else:
         raise ValueError('Invalid selections type {}'.format(type))
@@ -174,14 +158,14 @@ def _get_selections(type, start, stop,
     data = converter(data)
     
     # Curate the data
-    if sort:
-        data = sort_segments(data)
     if combine:
         combine_segments(data, delta_t=delta_t)
+    if sort:
+        data = sort_segments(data)
     if unique:
         data = remove_duplicate_segments(data)
-    if re_filter is not None:
-        data = filter_segments(data, re_filter)
+    if filter is not None:
+        data = filter_segments(data, filter)
     
     return data
 
@@ -220,12 +204,12 @@ def _sitl_selections_to_burst_segment(data):
         Data converted to `BurstSegment` instances
     '''
     result = []
-    for tstart, tend, fom, discussion, sourceid, file in \
+    for tstart, tend, fom, discussion, sourceid, createtime in \
         zip(data['tstart'], data['tstop'], data['fom'],
-            data['discussion'], data['fom'], data['file']
-            ):
+            data['discussion'], data['sourceid'], data['createtime']):
         result.append(BurstSegment(tstart, tend, fom, discussion,
-                                   sourceid=sourceid, file=file)
+                                   sourceid=sourceid,
+                                   createtime=createtime)
                       )
     return result
 
@@ -277,7 +261,7 @@ def combine_segments(data, delta_t=0):
     del data[icontig:]
 
 
-def filter_segments(data, re_filter):
+def filter_segments(data, filter):
     '''
     Filter burst selections by their discussion string.
 
@@ -286,7 +270,7 @@ def filter_segments(data, re_filter):
     data : dict
         Selections to be combined. Must have key 'discussion'.
     '''
-    return [seg for seg in data if re.search(re_filter, seg.discussion)]
+    return [seg for seg in data if re.search(filter, seg.discussion)]
 
 
 def metric(figtype=None):
@@ -471,7 +455,7 @@ def metric(figtype=None):
     plt.show()
 
 
-def print_selections(data):
+def print_selections(data, full=False):
     '''
     Print details of the burst selections.
 
@@ -481,6 +465,23 @@ def print_selections(data):
         Selections to be printed. Must have keys 'tstart', 'tstop',
         'fom', 'sourceid', and 'discussion'
     '''
+    if full:
+        source_len = max(len(s.sourceid) for s in data)
+        source_len = max(source_len, 8)
+        fmt_str = '{0:>19}   {1:>19}   {2:>19}   {3:>5}   ' \
+                  '{4:>'+str(source_len)+'}   {5}'
+        print(fmt_str.format('TSTART', 'TSTOP', 'CREATETIME', 'FOM',
+                             'SOURCEID', 'DISCUSSION')
+              )
+        for s in data:
+            createtime = dt.datetime.strftime(s.createtime,
+                                              '%Y-%m-%d %H:%M:%S')
+            print(fmt_str.format(s.start_time, s.stop_time, createtime,
+                                 s.fom, s.sourceid, s.discussion)
+                  )
+        return
+    
+    
     print('{0:>19}   {1:>19}   {2}   {3}'
           .format('TSTART', 'TSTOP', 'FOM', 'DISCUSSION')
           )
@@ -510,10 +511,9 @@ def read_csv(filename, start_time=None, stop_time=None, header=True):
         and if a column is named `'stop_time'`
     header : bool
         If `True`, the csv file has a header indicating the
-        names of each column. The file is expected to contain
-        the columns `'start_time'`, `'stop_time'`, `'fom'`,
-        and `'discussion'`. If `header` is `False`, these are
-        the assumed column names.
+        names of each column. If `header` is `False`, the
+        assumed column names are 'start_time', 'stop_time',
+        'fom', 'sourceid', 'discussion', 'createtime'.
     
     Returns
     -------
@@ -527,7 +527,6 @@ def read_csv(filename, start_time=None, stop_time=None, header=True):
         stop_time = dt.datetime.strptime(stop_time, '%Y-%m-%d %H:%M:%S')
     
     file = pathlib.Path(filename)
-    required_keys = ('start_time', 'stop_time', 'fom', 'discussion')
     data = []
             
     # Read the file
@@ -536,41 +535,28 @@ def read_csv(filename, start_time=None, stop_time=None, header=True):
         
         # Take column names from file header
         if header:
-            header = next(csvreader)
-            if not all([required_key in header 
-                        for required_key in required_keys]):
-                ValueError('Header does not contain some required keys.')
-        else:
-            header = required_keys
+            keys = next(csvreader)
             
         # Read the rows
         for row in csvreader:
-            data_dict = {key: value for key, value in zip(header, row)}
-            
             # Select the data within the time interval
             if start_time is not None:
-                tstart = dt.datetime.strptime(data_dict['start_time'],
+                tstart = dt.datetime.strptime(row[0],
                                               '%Y-%m-%d %H:%M:%S')
                 if tstart < start_time:
                     continue
             if stop_time is not None:
-                tstop = dt.datetime.strptime(data_dict['start_time'],
+                tstop = dt.datetime.strptime(row[1],
                                              '%Y-%m-%d %H:%M:%S')
                 if tstop > stop_time:
                     continue  # BREAK if sorted!!
             
             # Initialize segment with required fields then add
             # additional fields after
-            segment = BurstSegment(data_dict.pop('start_time'),
-                                   data_dict.pop('stop_time'),
-                                   float(data_dict.pop('fom')),
-                                   data_dict.pop('discussion'),
-                                   file=filename
-                                   )
-            for key, value in data_dict.items():
-                setattr(segment, key, value)
-            
-            data.append(segment)
+            data.append(BurstSegment(row[0], row[1], float(row[2]), row[4],
+                                     sourceid=row[3], createtime=row[5]
+                                     )
+                        )
     
     return data
 
@@ -588,30 +574,92 @@ def remove_duplicate_segments(data):
     data : list of `BurstSegment`
         Selections from which to prude duplicates. Segments
         must be sorted by `tstart`.
+    
+    Returns
+    -------
+    results : list of `BurstSegments`
+        Unique burst segments.
     '''
+    results = data.copy()
+    overwrite_times = set()
+    for idx, segment in enumerate(data):
+        iahead = idx + 1
+        
+        # Segments should already be sorted. Future segments
+        # overlap with current segment if the future segement
+        # start time is closer to the current segment start
+        # time than is the current segment's end time.
+        while ((iahead < len(data)) and 
+               ((data[iahead].tstart - segment.tstart) <
+                (segment.tstop - segment.tstart))
+               ):
+            
+            # Remove the segment with the earlier create time
+            if segment.createtime < data[iahead].createtime:
+                remove_segment = segment
+                overwrite_time = segment.createtime
+            else:
+                remove_segment = data[iahead]
+                overwrite_time = data[iahead].createtime
+            
+            # The segment may have already been removed if
+            # there are more than one other segments that
+            # overlap with it.
+            try:
+                results.remove(remove_segment)
+                overwrite_times.add(overwrite_time)
+            except ValueError:
+                pass
+            
+            iahead += 1
+    
+    # Remove all segments with create times in the overwrite set
+    # Note that the model results do not appear to be reproducible
+    # so that every time the model is run, a different set of
+    # selections are created. Using the filter below, data from
+    # whole days can be removed if two processes create overlapping
+    # segments at the edges of their time intervals.
+#     results = [segment
+#                for segment in results
+#                if segment.createtime not in overwrite_times
+#                ]
+    
+    print('# Segments Removed: {}'.format(len(data) - len(results)))
+    return results
 
-    idx = 0
-    i = idx
+
+def remove_duplicate_segments_v1(data):
+    idx = 0  # current index
+    i = idx  # look-ahead index
     noverlap = 0
     result = []
     for idx in range(len(data)):
         if idx < i:
             continue
+        print(idx)
 
+        # Reference segment is the current segment
         ref_seg = data[idx]
         t0_ref = ref_seg.taistarttime
         t1_ref = ref_seg.taiendtime
         dt_ref = t1_ref - t0_ref
+        
+        if idx == len(data) - 2:
+            import pdb
+            pdb.set_trace()
 
         try:
+            # Test segment are after the reference segment. The
+            # test segment overlaps with the reference segment
+            # if its start time is closer to the reference start
+            # time than is the reference end time. If there is
+            # overlap, keep the segment that was created more
+            # recently.
             i = idx + 1
             while ((data[i].taistarttime - t0_ref) < dt_ref):
                 noverlap += 1
                 test_seg = data[i]
-                fstart_ref = ref_seg.file_start_time()
-                fstart_test = test_seg.file_start_time()
-
-                if data[i].file_start_time() > data[idx].file_start_time():
+                if data[i].createtime > data[idx].createtime:
                     ref_seg = test_seg
                 i += 1
         except IndexError:
@@ -662,7 +710,7 @@ def selection_overlap(ref, tests):
 
 def selections(type, start, stop,
                sort=True, combine=True, unique=True,
-               re_filter=None):
+               filter=None):
     '''
     Factory function for burst data selections.
     
@@ -686,7 +734,7 @@ def selections(type, start, stop,
         the time interval of their selections, so different submissions will
         have duplicates selections but with different time stamps. This is
         accounted for.
-    re_filter : str
+    filter : str
         Filter the burst segments by applying the regular expression to
         the segment's discussions string.
     
@@ -697,43 +745,46 @@ def selections(type, start, stop,
     '''
     return _get_selections(type, start, stop,
                            sort=sort, combine=combine, unique=unique,
-                           re_filter=re_filter)
+                           filter=filter)
 
 
-def sort_segments(data):
+def sort_segments(data, createtime=False):
     '''
     Sort abs, sitl, or gls selections into ascending order.
 
     Parameters
     ----------
-    data : dict
+    data : list of `BurstSegement`
         Selections to be sorted. Must have keys 'start_time', 'end_time',
         'fom', 'discussion', 'tstart', and 'tstop'.
+    createtime: bool
+        Sort by time created instead of by selection start time.
+    
+    Returns
+    -------
+    results : list of `BurstSegement`
+        Inputs sorted by time
     '''
+    if createtime:
+        return sorted(data, key=lambda x: x.createtime)
     return sorted(data, key=lambda x: x.tstart)
 
 
-def write_csv(filename, data,
-              fields=('start_time', 'stop_time', 'fom', 'discussion'),
-              append=False):
+def write_csv(filename, data, append=False):
     '''
     Write a CSV file with burst data segment selections.
 
     Parameters
     ----------
-    data : list of `BurstSegment`
-        Burst segments to be written to the csv file
-    fields : tuple of str
-        Names of attributes for which the attribute value is to
-        be recorded in the file
     filename : str
         The name of the file to which `data` is to be written
+    data : list of `BurstSegment`
+        Burst segments to be written to the csv file
     append : bool
         If True, `data` will be appended to the end of the file.
     '''
-    required_keys = ('start_time', 'stop_time', 'fom', 'discussion')
-    if not all(required_key in fields for required_key in required_keys):
-        ValueError('fields is missing required elements.')
+    header = ('start_time', 'stop_time', 'fom', 'sourceid',
+              'discussion', 'createtime')
     
     mode = 'w'
     if append:
@@ -744,14 +795,15 @@ def write_csv(filename, data,
         csvwriter = csv.writer(csvfile)
         
         if not append:
-            csvwriter.writerow(fields)
+            csvwriter.writerow(header)
         
         for segment in data:
-            csvwriter.writerow([getattr(segment, field)
-                                if field not in ('start_time', 'stop_time')
-                                else segment.start_time if field == 'start_time'
-                                else segment.stop_time
-                                for field in fields
+            csvwriter.writerow([segment.start_time,
+                                segment.stop_time,
+                                segment.fom,
+                                segment.sourceid,
+                                segment.discussion,
+                                segment.createtime
                                 ]
                                )
 
