@@ -1135,6 +1135,171 @@ def burst_data_segments(start_date, end_date,
     return data
 
 
+def burst_selections(selection_type, start, stop):
+    '''
+    A factory function for retrieving burst selection data.
+    
+    Parameters
+    ----------
+    type : str
+        The type of data to retrieve. Options include:
+            Type       Source                     Description
+            =========  =========================  =======================================
+            abs        download_selections_files  ABS selections
+            sitl       download_selections_files  SITL selections
+            sitl+back  burst_data_segments        SITL and backstructure selections
+            gls        download_selections_files  ground loop selections from 'mp-dl-unh'
+            mp-dl-unh  download_selections_files  ground loop selections from 'mp-dl-unh'
+            =========  ========================   =======================================
+    start, stop : `datetime.datetime`
+        Time interval for which data is to be retrieved
+    sc : str
+        Spacecraft identifier: {'mms1', 'mms2', 'mms3', 'mms4'}
+    
+    Returns
+    -------
+    data : struct
+        The requested data
+    '''
+    data_retriever = _get_selection_retriever(selection_type)
+    return data_retriever(start, stop)
+
+
+def _get_selection_retriever(selection_type):
+    '''
+    Creator function for mission events data.
+    
+    Parameters
+    ----------
+    selections_type : str
+        Type of data desired
+    
+    Returns
+    -------
+    func : function
+        Function to generate the data
+    '''
+    if selection_type == 'abs':
+        return _get_abs_data
+    elif selection_type == 'sitl':
+        return _get_sitl_data
+    elif selection_type == 'sitl+back':
+        return burst_data_segments
+    elif selection_type in ('gls', 'mp-dl-unh'):
+        return _get_gls_data
+    else:
+        raise ValueError('Burst selection type {} not recognized'
+                         .format(selection_type))
+
+
+def _get_abs_data(start, stop):
+    '''
+    Download and read Automated Burst Selections sav files.
+    '''
+    abs_files = download_selections_files('abs_selections',
+                                          start_date=start, end_date=stop)
+    return _read_fom_structures(abs_files)
+
+
+def _get_sitl_data(start, stop):
+    '''
+    Download and read SITL selections sav files.
+    '''
+    sitl_files = download_selections_files('sitl_selections',
+                                           start_date=start, end_date=stop)
+    return _read_fom_structures(sitl_files)
+
+
+def _get_gls_data(start, stop):
+    '''
+    Download and read Ground Loop Selections csv files.
+    '''
+    gls_files = download_selections_files('gls_selections',
+                                          gls_type='mp-dl-unh',
+                                          start_date=start, end_date=stop)
+    
+    # Prepare to loop over files
+    if isinstance(gls_files, str):
+        gls_files = [gls_files]
+    
+    # Statistics of bad selections
+    fskip = 0  # number of files skipped
+    nskip = 0  # number of selections skipped
+    nexpand = 0  # number of selections expanded
+    result = dict()
+    
+    # Read multiple files
+    for file in gls_files:
+        data = read_gls_csv(file)
+        
+        # Accumulative sum of errors
+        fskip += data['errors']['fskip']
+        nskip += data['errors']['nskip']
+        nexpand += data['errors']['nexpand']
+        if data['errors']['fskip']:
+            continue
+        del data['errors']
+        
+        # Extend results from all files. Keep track of the file
+        # names since entries can change. The most recent file
+        # contains the correct selections information.
+        if len(result) == 0:
+            result = data
+            result['file'] = [file] * len(result['fom'])
+        else:
+            result['file'].extend([file] * len(result['fom']))
+            for key, value in data.items():
+                result[key].extend(value)
+    
+    # Display bad data
+    if (fskip > 0) | (nskip > 0) | (nexpand > 0):
+        print('Selection Adjustments:')
+        print('  # files skipped:    {}'.format(fskip))
+        print('  # entries skipped:  {}'.format(nskip))
+        print('  # entries expanded: {}'.format(nexpand))
+    
+    return result
+
+
+def _read_fom_structures(files):
+    '''
+    Read multiple IDL sav files containing ABS or SITL selections.
+    '''
+    # Read data from all files
+    result = dict()
+    for file in files:
+        data = read_eva_fom_structure(file)
+        if data['valid'] == 0:
+            raise ValueError('Invalid fom structure. Investigate!')
+        
+        # Turn scalars into lists so they can be accumulated
+        # across multiple files.
+        #
+        # Keep track of file name because the same selections
+        # (or updated versions of the same selections) can be
+        # stored in multiple files, if they were submitted to
+        # the SDC multiple times.
+        if len(result) == 0:
+            result = {key:
+                      (value
+                       if isinstance(value, list)
+                       else [value])
+                      for key, value in data.items()
+                      }
+            result['file'] = [file] * len(data['fom'])
+        
+        # Append or extend data from subsequent files
+        else:
+            result['file'].extend([file] * len(data['fom']))
+            for key, value in data.items():
+                if isinstance(value, list):
+                    result[key].extend(value)
+                else:
+                    result[key].append(value)
+    
+    return result
+
+
 def construct_file_names(*args, data_type='science', **kwargs):
     '''
     Construct a file name compliant with MMS file name format guidelines.
@@ -1568,6 +1733,46 @@ def construct_science_path(sc, instr=None, mode=None, level=None, tstart='*',
     return paths
 
 
+def download_selections_files(data_type='abs_selections',
+                              start_date=None, end_date=None,
+                              gls_type=None):
+    """
+    Download SITL selections from the SDC.
+
+    Parameters
+    ----------
+    data_type : str
+        Type of SITL selections to download. Options are
+            'abs_selections', 'sitl_selections', 'gls_selections'
+    gls_type : str
+        Type of gls_selections. Options are
+            'mp-dl-unh'
+    start_date : `dt.datetime` or str
+        Start date of data interval
+    end_date : `dt.datetime` or str
+        End date of data interval
+
+    Returns
+    -------
+    local_files : list
+        Names of the selection files that were downloaded. Files
+        can be read using mms.read_eva_fom_structure()
+    """
+
+    if gls_type is not None:
+        data_type = '_'.join((data_type, gls_type))
+
+    # Setup the API
+    api = MrMMS_SDC_API()
+    api.data_type = data_type
+    api.start_date = start_date
+    api.end_date = end_date
+
+    # Download the files
+    local_files = api.download_files()
+    return local_files
+
+
 def file_start_time(file_name):
     '''
     Extract the start time from a file name.
@@ -1818,171 +2023,249 @@ def filter_version(files, latest=None, version=None, min_version=None):
     return filtered_files
 
 
-def mission_data(type, start, stop):
-    '''
-    A factory function for retrieving non-science data.
-    
+def mission_events(event_type, start, stop, sc=None):
+    """
+    Download MMS mission events. See the filters on the webpage
+    for more ideas.
+        https://lasp.colorado.edu/mms/sdc/public/about/events/#/
+
     Parameters
     ----------
-    type : str
-        The type of data to retrieve. Options include:
-            Type       Source               Description
-            =========  ===================  =======================================
-            abs        sitl_selections      ABS selections
-            sitl       sitl_selections      SITL selections
-            sitl+back  burst_data_segments  SITL and backstructure selections
-            gls        sitl_selections      ground loop selections from 'mp-dl-unh'
-            mp-dl-unh  sitl_selections      ground loop selections from 'mp-dl-unh'
-            sroi       mission_events       Science sub-regions of interest
-            roi        mission_events       Science region of interest
-            =========  ===================  =======================================
-    start, stop : `datetime.datetime`
-        Time interval for which data is to be retrieved
-    
+    event_type : str
+        Type of event. Options are 'apogee', 'dsn_contact', 'orbit',
+        'perigee', 'science_roi', 'shadow', 'sitl_window', 'sroi'.
+    start, stop : `datetime.datetime`, int
+        Start and end of the data interval, specified as a time or
+        orbit range.
+    sc : str
+        Spacecraft ID (mms, mms1, mms2, mms3, mms4) for which event
+        information is to be returned.
+
     Returns
     -------
-    data : struct
-        The requested data
-    '''
-    data_retriever = _get_mission_data(type)
-    return data_retriever(start, stop)
-        
-def _get_mission_data(type):
-    '''
-    Creator function for mission events data.
-    
-    Parameters
-    ----------
-    type : str
-        Type of data desired
-    
-    Returns
-    -------
-    func : function
-        Function to generate the data
-    '''
-    if type == 'abs':
-        return _get_abs_data
-    elif type == 'sitl':
-        return _get_sitl_data
-    elif type == 'sitl+back':
-        return burst_data_segments
-    elif type in ('gls', 'mp-dl-unh'):
-        return _get_gls_data
-    elif type == 'sroi':
+    data : dict
+        Information about each event.
+            start_time     - Start time (UTC) of event %Y-%m-%dT%H:%M:%S.%f
+            end_time       - End time (UTC) of event %Y-%m-%dT%H:%M:%S.%f
+            event_type     - Type of event
+            sc_id          - Spacecraft to which the event applies
+            source         - Source of event
+            description    - Description of event
+            discussion
+            start_orbit    - Orbit on which the event started
+            end_orbit      - Orbit on which the event ended
+            tag
+            id
+            tstart         - Start time of event as datetime
+            tend           - end time of event as datetime
+    """
+    event_func = _get_mission_events(event_type)
+    return event_func(start, stop, sc)
+
+def _get_mission_events(event_type):
+    if event_type == 'apogee':
+        return _get_apogee
+    elif event_type == 'dsn_contact':
+        return _get_dsn_contact
+    elif event_type == 'orbit':
+        return _get_orbit
+    elif event_type == 'perigee':
+        return _get_perigee
+    elif event_type == 'science_roi':
+        return _get_science_roi
+    elif event_type == 'shadow':
+        return _get_shadow
+    elif event_type == 'sitl_window':
+        return _get_sitl_window
+    elif event_type == 'sroi':
         return _get_sroi
-    else:
-        raise ValueError('Mission data type {} not recognized'.format(type))
 
+def _get_apogee(start, stop, sc):
+    '''
+    Apogee information between `start` and `stop` and associated
+    with spacecraft `sc`.
+    '''
+    return _mission_data(start, stop, sc=sc,
+                          source='Timeline', event_type='apogee')
 
-def _get_abs_data(start, stop):
-    abs_files = sitl_selections('abs_selections',
-                                start_date=start, end_date=stop)
-    return _read_fom_structures(abs_files)
+def _get_dsn_contact(start, stop, sc):
+    '''
+    Science region of interest information between `start` and `stop`
+    and associated with spacecraft `sc`. Defines the limits of when
+    fast survey and burst data can be available each orbit.
+    '''
+    return _mission_data(start, stop, sc=sc,
+                          source='Timeline', event_type='dsn_contact')
 
+def _get_orbit(start, stop, sc):
+    '''
+    Orbital information between `start` and `stop` and associated
+    with spacecraft `sc`.
+    '''
+    return _mission_data(start, stop, sc=sc,
+                          source='Timeline', event_type='orbit')
 
-def _get_sitl_data(start, stop):
-    sitl_files = sitl_selections('sitl_selections',
-                                 start_date=start, end_date=stop)
+def _get_perigee(start, stop, sc):
+    '''
+    Perigee information between `start` and `stop` and associated
+    with spacecraft `sc`.
+    '''
+    return _mission_data(start, stop, sc=sc,
+                          source='Timeline', event_type='perigee')
 
+def _get_science_roi(start, stop, sc):
+    '''
+    Science region of interest information between `start` and `stop`
+    and associated with spacecraft `sc`. Defines the limits of when
+    fast survey and burst data can be available each orbit.
+    '''
+    return _mission_data(start, stop, sc=sc,
+                          source='BDM', event_type='science_roi')
 
-def _get_gls_data(start, stop):
-    gls_files = sitl_selections('gls_selections', gls_type='mp-dl-unh',
-                                start_date=start, end_date=stop)
-    
-    return _read_fom_structures(gls_files)
+def _get_shadow(start, stop, sc):
+    '''
+    Earth shadow information between `start` and `stop` and associated
+    with spacecraft `sc`.
+    '''
+    return _mission_data(start, stop, sc=sc,
+                          source='POC', event_type='shadow')
 
-def _get_sroi(start, stop, sc=None):
-    return mission_events(start, stop, sc=sc,
+def _get_sroi(start, stop, sc):
+    '''
+    Sub-region of interest information between `start` and `stop`
+    and associated with spacecraft `sc`. There can be several
+    SROIs per science_roi.
+    '''
+    return _mission_data(start, stop, sc=sc,
                           source='POC', event_type='SROI')
 
-def _read_fom_structures(files):
-    # Read data from all files
-    result = dict()
-    for file in files:
-        data = read_eva_fom_structure(file)
-        if data['valid'] == 0:
-            raise ValueError('Invalid fom structure. Investigate!')
-        
-        # Turn scalars into lists so they can be accumulated
-        # across multiple files.
-        #
-        # Keep track of file name because the same selections
-        # (or updated versions of the same selections) can be
-        # stored in multiple files, if they were submitted to
-        # the SDC multiple times.
-        if len(result) == 0:
-            result = {key:
-                      (value
-                       if isinstance(value, list)
-                       else [value])
-                      for key, value in data.items()
-                      }
-            result['file'] = [file] * len(data['fom'])
-        
-        # Append or extend data from subsequent files
+def _get_sitl_window(start, stop, sc):
+    '''
+    SITL window information between `start` and `stop` and associated
+    with spacecraft `sc`. Defines when the SITL can submit selections.
+    '''
+    return _mission_data(start, stop, sc=sc,
+                          source='BDM', event_type='sitl_window')
+
+
+def _mission_data(start, stop, sc=None,
+                  source=None, event_type=None):
+    """
+    Download MMS mission events. See the filters on the webpage
+    for more ideas.
+        https://lasp.colorado.edu/mms/sdc/public/about/events/#/
+
+    NOTE: some sources, such as 'burst_segment', return a format
+          that is not yet parsed properly.
+
+    Parameters
+    ----------
+    start, stop : `datetime.datetime`, int
+        Start and end of the data interval, specified as a time or
+        orbit range.
+    sc : str
+        Spacecraft ID (mms, mms1, mms2, mms3, mms4) for which event
+        information is to be returned.
+    source : str
+        Source of the mission event. Options include
+            'Timeline', 'Burst', 'BDM', 'SITL'
+    event_type : str
+        Type of mission event. Options include
+            BDM: sitl_window, evaluate_metadata, science_roi
+
+    Returns
+    -------
+    data : dict
+        Information about each event.
+            start_time     - Start time (UTC) of event %Y-%m-%dT%H:%M:%S.%f
+            end_time       - End time (UTC) of event %Y-%m-%dT%H:%M:%S.%f
+            event_type     - Type of event
+            sc_id          - Spacecraft to which the event applies
+            source         - Source of event
+            description    - Description of event
+            discussion
+            start_orbit    - Orbit on which the event started
+            end_orbit      - Orbit on which the event ended
+            tag
+            id
+            tstart         - Start time of event as datetime
+            tend           - end time of event as datetime
+    """
+    url = 'https://lasp.colorado.edu/' \
+          'mms/sdc/public/service/latis/mms_events_view.csv'
+    
+    start_date = None
+    end_date = None
+    start_orbit = None
+    end_orbit = None
+    
+    # mission_events() returns numpy integers, so check for
+    # those, too
+    if isinstance(start, int):
+        start_orbit = start
+    else:
+        start_date = start
+    if isinstance(stop, int):
+        end_orbit = stop
+    else:
+        end_date = stop
+    
+    query = {}
+    if start_date is not None:
+        query['start_time_utc>'] = start_date.strftime('%Y-%m-%d')
+    if end_date is not None:
+        query['end_time_utc<'] = end_date.strftime('%Y-%m-%d')
+
+    if start_orbit is not None:
+        query['start_orbit>'] = start_orbit
+    if end_orbit is not None:
+        query['end_orbit<'] = end_orbit
+
+    if sc is not None:
+        query['sc_id'] = sc
+    if source is not None:
+        query['source'] = source
+    if event_type is not None:
+        query['event_type'] = event_type
+
+    resp = requests.get(url, params=query)
+    data = _response_text_to_dict(resp.text)
+    
+    # Convert to useful types
+    types = ['str', 'str', 'str', 'str', 'str', 'str', 'str',
+             'int32', 'int32', 'str', 'int32']
+    for items in zip(data, types):
+        if items[1] == 'str':
+            pass
         else:
-            result['file'].extend([file] * len(data['fom']))
-            for key, value in data.items():
-                if isinstance(value, list):
-                    result[key].extend(value)
-                else:
-                    result[key].append(value)
+            data[items[0]] = np.asarray(data[items[0]], dtype=items[1])
+
+    # Add useful tags
+    #   - Number of seconds elapsed
+    #   - TAISTARTIME as datetime
+    #   - TAIENDTIME as datetime
+
+    # NOTE! If data['TAISTARTTIME'] is a scalar, this will not work
+    #       unless everything after "in" is turned into a list
+    data['tstart'] = [dt.datetime.strptime(
+                          value, '%Y-%m-%dT%H:%M:%S.%f'
+                          )
+                      for value in data['start_time']
+                      ]
+    data['tend'] = [dt.datetime.strptime(
+                        value, '%Y-%m-%dT%H:%M:%S.%f'
+                        )
+                    for value in data['end_time']
+                    ]
+
+    return data
     
-    return result
 
 
-def _get_gls_data(start, stop):
-    gls_files = sitl_selections('gls_selections', gls_type='mp-dl-unh',
-                                start_date=start, end_date=stop)
-    
-    # Prepare to loop over files
-    if isinstance(gls_files, str):
-        gls_files = [gls_files]
-    
-    # Statistics of bad selections
-    fskip = 0  # number of files skipped
-    nskip = 0  # number of selections skipped
-    nexpand = 0  # number of selections expanded
-    result = dict()
-    
-    # Read multiple files
-    for file in gls_files:
-        data = read_gls_csv(file)
-        
-        # Accumulative sum of errors
-        fskip += data['errors']['fskip']
-        nskip += data['errors']['nskip']
-        nexpand += data['errors']['nexpand']
-        if data['errors']['fskip']:
-            continue
-        del data['errors']
-        
-        # Extend results from all files. Keep track of the file
-        # names since entries can change. The most recent file
-        # contains the correct selections information.
-        if len(result) == 0:
-            result = data
-            result['file'] = [file] * len(result['fom'])
-        else:
-            result['file'].extend([file] * len(result['fom']))
-            for key, value in data.items():
-                result[key].extend(value)
-    
-    # Display bad data
-    if (fskip > 0) | (nskip > 0) | (nexpand > 0):
-        print('Selection Adjustments:')
-        print('  # files skipped:    {}'.format(fskip))
-        print('  # entries skipped:  {}'.format(nskip))
-        print('  # entries expanded: {}'.format(nexpand))
-    
-    return result
-
-
-def mission_events(start_date=None, end_date=None,
-                   start_orbit=None, end_orbit=None,
-                   sc=None,
-                   source=None, event_type=None):
+def mission_events_v1(start_date=None, end_date=None,
+                      start_orbit=None, end_orbit=None,
+                      sc=None,
+                      source=None, event_type=None):
     """
     Download MMS mission events. See the filters on the webpage
     for more ideas.
@@ -2031,7 +2314,7 @@ def mission_events(start_date=None, end_date=None,
     """
     url = 'https://lasp.colorado.edu/' \
           'mms/sdc/public/service/latis/mms_events_view.csv'
-
+    
     query = {}
     if start_date is not None:
         query['start_time_utc>'] = start_date.strftime('%Y-%m-%d')
@@ -2549,46 +2832,6 @@ def sdc_login(username):
         cookies.update(response.cookies)
 
     return cookies
-
-
-def sitl_selections(data_type='abs_selections',
-                    start_date=None, end_date=None,
-                    gls_type=None):
-    """
-    Download SITL selections from the SDC.
-
-    Parameters
-    ----------
-    data_type : str
-        Type of SITL selections to download. Options are
-            'abs_selections', 'sitl_selections', 'gls_selections'
-    gls_type : str
-        Type of gls_selections. Options are
-            'mp-dl-unh'
-    start_date : `dt.datetime` or str
-        Start date of data interval
-    end_date : `dt.datetime` or str
-        End date of data interval
-
-    Returns
-    -------
-    local_files : list
-        Names of the selection files that were downloaded. Files
-        can be read using mms.read_eva_fom_structure()
-    """
-
-    if gls_type is not None:
-        data_type = '_'.join((data_type, gls_type))
-
-    # Setup the API
-    api = MrMMS_SDC_API()
-    api.data_type = data_type
-    api.start_date = start_date
-    api.end_date = end_date
-
-    # Download the files
-    local_files = api.download_files()
-    return local_files
 
 
 def sort_files(files):

@@ -2,8 +2,6 @@ import pathlib
 import re
 import csv
 import datetime as dt
-from astropy.constants import R_earth
-import numpy as np
 from . import mrmms_sdc_api as sdc
 from cdflib import cdfread, epochs
 import matplotlib.pyplot as plt
@@ -133,13 +131,9 @@ def _get_selections(type, start, stop,
     '''
     Creator function for burst selections. See `selections`.
     '''
-    if type not in ('abs', 'abs-all', 'sitl', 'sitl+back',
-                    'gls', 'mp-dl-unh'
-                    ):
-        raise ValueError('Invalid selections type {}'.format(type))
     
     # Get the selections
-    data = sdc.mission_data(type, start, stop)
+    data = sdc.burst_selections(type, start, stop)
     
     # Turn the data into BurstSegments. Adjacent segments returned
     # by `sdc.sitl_selections have a 0 second gap between stop and

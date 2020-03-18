@@ -31,8 +31,7 @@ def time_to_orbit(time, sc='mms1'):
                                 dt.time(0, 0, 0))
     tstart = tstop - dt.timedelta(days=10)
     
-    orbit = sdc.mission_events(tstart, tstop, sc=sc,
-                               source='Timeline', event_type='orbit')
+    orbit = sdc.mission_events('orbit', tstart, tstop, sc=sc)
     
     if (orbit['tstart'][-1] > tstart) or (orbit['tstop'][-1] < time):
         ValueError('Did not find correct orbit!')
@@ -42,13 +41,16 @@ def time_to_orbit(time, sc='mms1'):
 
 def get_sroi(start, sc='mms1'):
     '''
-    Get the start and stop times of the science ROI, which encompasses
-    all ROIs
+    Get the start and stop times of the SROIs, the sub-regions of interest
+    within the orbit.
     
     Parameters
     ----------
     start : `datetime.datetime` or int
-        Time within the orbit
+        Time within an orbit or an orbit number. If time, note that the
+        duration of the SROIs are shorter than that of the orbit so it is
+        possible that `start` is not bounded by the start and end of the
+        SROIs themselves.
     sc : str
         Spacecraft identifier
     
@@ -62,8 +64,7 @@ def get_sroi(start, sc='mms1'):
         start = time_to_orbit(start, sc=sc)
 
     # Get the Sub-Regions of Interest
-    sroi = sdc.mission_events(start_orbit=start, end_orbit=start,
-                              sc=sc, source='POC', event_type='SROI')
+    sroi = sdc.mission_events('sroi', start, start, sc=sc)
 
     return sroi['tstart'], sroi['tend']
 
@@ -85,28 +86,49 @@ def plot_selections_in_sroi(sc, tstart,
     for offset in range(stop_orbit-start_orbit+1):
         # Get the SROI start and end times
         orbit = start_orbit + offset
-        sroi = sdc.mission_events(start_orbit=orbit, end_orbit=orbit,
-                                  sc=sc, source='POC', event_type='SROI')
+        sroi = sdc.mission_events('sroi', int(orbit), int(orbit), sc=sc)
         
-        # SROI 1
-        fig1, axes = plot_burst_selections(sc,
-                                           sroi['tstart'][0],
-                                           sroi['tend'][0]
-                                           )
+        for i in (0,2):
+            try:
+                fig, axes = plot_burst_selections(sc,
+                                                  sroi['tstart'][i],
+                                                  sroi['tend'][i]
+                                                  )
+            except Exception as e:
+                print('Failed on orbit-{0} SROI-{1}'.format(orbit, i+1))
+                print(e)
+                continue
         
-        plt.subplots_adjust(left=0.15, right=0.85, top=0.93)
-        if outdir is not None:
-            plt.savefig(outdir / fname_fmt.format(orbit, 1))
-        
-        # SROI 2
-        fig2, axes = plot_burst_selections(sc,
-                                           sroi['tstart'][2],
-                                           sroi['tend'][2]
-                                           )
-        
-        plt.subplots_adjust(left=0.15, right=0.85, top=0.93)
-        if outdir is not None:
-            plt.savefig(outdir / fname_fmt.format(orbit, 3))
+            plt.subplots_adjust(left=0.15, right=0.85, top=0.93)
+            if outdir is not None:
+                plt.savefig(outdir / fname_fmt.format(orbit, i+1))
+            plt.close(fig)
+
+
+def download_ql_data(t0, t1):
+    t0 = dt.datetime(2020, 1, 17, 19, 30)
+    t1 = dt.datetime(2020, 1, 17, 21, 0)
+
+    t0 = dt.datetime(2019, 12, 16, 18, 0, 0)
+    t1 = dt.datetime(2019, 12, 17, 08, 0, 0)
+
+    start_date = dt.datetime.combine(t0.date(), dt.time(0, 0, 0))
+    end_date = dt.datetime.combine(t1.date() + dt.timedelta(days=1), dt.time(0, 0, 0))
+    api = sdc.MrMMS_SDC_API('mms1', 'afg', 'srvy', 'ql',
+                            start_date=start_date, end_date=end_date)
+    afg_files = api.download()
+
+    api.instr = 'edp'
+    api.mode = 'fast'
+    api.optdesc = 'dce'
+    edp_files = api.download()
+
+    api.instr = 'fpi'
+    api.optdesc = 'des'
+    des_files = api.download()
+
+    api.optdesc = 'dis'
+    dis_files = api.download()
 
 
 def plot_sroi(sc, tstart, sroi=1):
@@ -118,7 +140,8 @@ def plot_sroi(sc, tstart, sroi=1):
     plt.show()
 
 
-def plot_burst_selections(sc, start_date, end_date):
+def plot_burst_selections(sc, start_date, end_date,
+                          figsize=(5.5, 7)):
     mode = 'srvy'
     level = 'l2'
 
@@ -127,6 +150,7 @@ def plot_burst_selections(sc, start_date, end_date):
     api = sdc.MrMMS_SDC_API(sc, 'fgm', mode, level,
                             start_date=start_date, end_date=end_date)
     files = api.download_files()
+    files = sdc.sort_files(files)[0]
     fgm_data = metaarray.from_pycdf(files, b_vname,
                                     tstart=start_date, tend=end_date)
 
@@ -138,6 +162,7 @@ def plot_burst_selections(sc, start_date, end_date):
                             optdesc='dis-moms',
                             start_date=start_date, end_date=end_date)
     files = api.download_files()
+    files = sdc.sort_files(files)[0]
     
     ni_data = metaarray.from_pycdf(files, ni_vname,
                                    tstart=start_date, tend=end_date)
@@ -151,6 +176,7 @@ def plot_burst_selections(sc, start_date, end_date):
                             optdesc='des-moms',
                             start_date=start_date, end_date=end_date)
     files = api.download_files()
+    files = sdc.sort_files(files)[0]
     ne_data = metaarray.from_pycdf(files, ne_vname,
                                    tstart=start_date, tend=end_date)
     espece_data = metaarray.from_pycdf(files, espec_e_vname,
@@ -158,10 +184,10 @@ def plot_burst_selections(sc, start_date, end_date):
     
     
     # Grab selections
-    abs_files = sdc.sitl_selections('abs_selections',
-                                    start_date=start_date, end_date=end_date)
-    gls_files = sdc.sitl_selections('gls_selections', gls_type='mp-dl-unh',
-                                    start_date=start_date, end_date=end_date)
+#    abs_files = sdc.sitl_selections('abs_selections',
+#                                    start_date=start_date, end_date=end_date)
+#    gls_files = sdc.sitl_selections('gls_selections', gls_type='mp-dl-unh',
+#                                    start_date=start_date, end_date=end_date)
 
     # Read the files
     abs_data = sel.read_csv('/Users/argall/Desktop/abs_test.csv',
@@ -218,13 +244,15 @@ def plot_burst_selections(sc, start_date, end_date):
     ne_data.title = 'N\n($cm^{-3}$)'
     abs.title = 'ABS'
     gls.title = 'GLS'
+    gls.lim = (0, 200)
     sitl.title = 'SITL'
     
     # Plot
     fig, axes = metabase.MetaCache.plot(
-        (especi_data, espece_data, fgm_data, ni_data, abs, gls, sitl)
+        (especi_data, espece_data, fgm_data, ni_data, abs, gls, sitl),
+        figsize=figsize
         )
-
+    plt.subplots_adjust(left=0.15, right=0.85, top=0.93)
     return fig, axes
 
 
