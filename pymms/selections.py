@@ -11,7 +11,7 @@ tai_1958 = epochs.CDFepoch.compute_tt2000([1958, 1, 1, 0, 0, 0, 0, 0, 0])
 
 class BurstSegment:
     def __init__(self, tstart, tstop, fom, discussion,
-                 sourceid=None, createtime=None):
+                 sourceid=None, createtime=None, **kwargs):
         '''
         Create an object representing a burst data segment.
 
@@ -51,6 +51,10 @@ class BurstSegment:
         self.sourceid = sourceid
         self.tstart = tstart
         self.tstop = tstop
+        
+        # Allow orbit, sroi, and sitl_window information
+        for key, item in kwargs.items():
+            setattr(self, key, item)
 
     def __str__(self):
         return ('{0}   {1}   {2:3.0f}   {3}'
@@ -144,15 +148,19 @@ def _get_selections(type, start, stop,
     
     # Get the selections
     data = sdc.burst_selections(type, orbit_start, orbit_stop)
+    data = _get_segment_data(data, orbit_start, orbit_stop)
+    
+    import pdb
+    pdb.set_trace()
     
     # Turn the data into BurstSegments. Adjacent segments returned
     # by `sdc.sitl_selections` have a 0 second gap between stop and
     # start times. Those returned by `sdc.burst_data_segments` are
     # separated by 10 seconds.
-    if type in ('abs-all', 'sitl', 'gls', 'mp-dl-unh'):
+    if type in ('abs', 'sitl', 'gls', 'mp-dl-unh'):
         delta_t = 0.0
         converter = _sitl_selections_to_burst_segment
-    elif type in ('abs', 'sitl+back'):
+    elif type == 'sitl+back':
         delta_t = 10.0
         converter = _burst_data_segments_to_burst_segment
     else:
@@ -182,6 +190,71 @@ def _get_selections(type, start, stop,
         data = filter_segments(data, filter)
     
     return data
+
+
+def _get_segment_data(data, orbit_start, orbit_stop, sc='mms1'):
+    '''
+    '''
+    idx = 0
+    result = data.copy()
+    nsegments = len(data['fom'])
+    keys = ['orbit', 'orbit_tstart', 'orbit_tstop',
+            'sroi', 'sroi_tstart', 'sroi_tstop',
+            'sitl_window_tstart', 'sitl_window_tstop']
+    metadata = {k: [None]*nsegments for k in keys}
+    
+    for iorbit in range(orbit_start, orbit_stop+1):
+        # The start and end times of the sub-regions of interest.
+        # These are the times in which selections can be made for
+        # any given orbit.
+        orbit = sdc.mission_events('orbit', iorbit, iorbit, sc=sc)
+        sroi = sdc.mission_events('sroi', iorbit, iorbit, sc=sc)
+        window = sdc.mission_events('sitl_window', iorbit, iorbit)
+        tstart = min(sroi['tstart'])
+        tend = max(sroi['tend'])
+        
+        # Find the burst segments that were selected within the
+        # current SROI
+        
+        while idx < len(data['fom']):
+            # Filter out selections from the previous orbit(s)
+            # Stop when we get to the next orbit
+            if data['tstop'][idx] < tstart:
+                idx += 1
+                continue
+            if data['tstart'][idx] > tend:
+                break
+            
+            # Keep segments from the same submission (create time).
+            # If there is a new submission within the orbit, take
+            # selections from the new submission and discard those
+            # from the old.
+            metadata['orbit'][idx] = iorbit
+            metadata['orbit_tstart'][idx] = orbit['tstart'][0]
+            metadata['orbit_tstop'][idx] = orbit['tend'][0]
+            
+            sroi_data = _get_sroi_number(sroi, data['tstart'][idx], data['tstop'][idx])
+            metadata['sroi'][idx] = sroi_data[0]
+            metadata['sroi_tstart'][idx] = sroi_data[1]
+            metadata['sroi_tstop'][idx] = sroi_data[2]
+            
+            metadata['sitl_window_tstart'][idx] = window['tstart']
+            metadata['sitl_window_tstop'][idx] = window['tend']
+            
+            idx += 1
+    
+    result.update(metadata)
+    return result
+
+
+def _get_sroi_number(sroi, tstart, tstop):
+    sroi_num = 0
+    for sroi_tstart, sroi_tstop in zip(sroi['tstart'], sroi['tend']):
+        sroi_num += 1
+        if (tstart >= sroi_tstart) and (tstop <= sroi_tstop):
+            break
+    
+    return sroi_num, sroi_tstart, sroi_tstop
 
 
 def _prune_selections(data, orbit_start, orbit_stop):
@@ -269,12 +342,20 @@ def _sitl_selections_to_burst_segment(data):
         Data converted to `BurstSegment` instances
     '''
     result = []
-    for tstart, tend, fom, discussion, sourceid, createtime in \
-        zip(data['tstart'], data['tstop'], data['fom'],
-            data['discussion'], data['sourceid'], data['createtime']):
-        result.append(BurstSegment(tstart, tend, fom, discussion,
-                                   sourceid=sourceid,
-                                   createtime=createtime)
+    for idx in range(len(data['fom'])):
+        result.append(BurstSegment(data['tstart'][idx], data['tstop'][idx], 
+                                   data['fom'][idx], data['discussion'][idx],
+                                   sourceid=data['sourceid'][idx],
+                                   createtime=data['createtime'][idx],
+                                   orbit=data['orbit'][idx],
+                                   orbit_tstart=data['orbit_tstart'][idx],
+                                   orbit_tstop=data['orbit_tstart'][idx],
+                                   sroi=data['sroi'][idx],
+                                   sroi_tstart=data['sroi_tstart'][idx],
+                                   sroi_tstop=data['sroi_tstop'][idx],
+                                   sitl_window_tstart=data['sitl_window_tstart'][idx],
+                                   sitl_window_tstop=data['sitl_window_tstop'][idx]
+                                   )
                       )
     return result
 
