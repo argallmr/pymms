@@ -1143,27 +1143,31 @@ def burst_selections(selection_type, start, stop):
     ----------
     type : str
         The type of data to retrieve. Options include:
-            Type       Source                     Description
-            =========  =========================  =======================================
-            abs        download_selections_files  ABS selections
-            sitl       download_selections_files  SITL selections
-            sitl+back  burst_data_segments        SITL and backstructure selections
-            gls        download_selections_files  ground loop selections from 'mp-dl-unh'
-            mp-dl-unh  download_selections_files  ground loop selections from 'mp-dl-unh'
-            =========  ========================   =======================================
+        Type       Source                     Description
+        =========  =========================  =======================================
+        abs        download_selections_files  ABS selections
+        sitl       download_selections_files  SITL selections
+        sitl+back  burst_data_segments        SITL and backstructure selections
+        gls        download_selections_files  ground loop selections from 'mp-dl-unh'
+        mp-dl-unh  download_selections_files  ground loop selections from 'mp-dl-unh'
+        =========  ========================   =======================================
     start, stop : `datetime.datetime`
         Time interval for which data is to be retrieved
-    sc : str
-        Spacecraft identifier: {'mms1', 'mms2', 'mms3', 'mms4'}
     
     Returns
     -------
     data : struct
         The requested data
     '''
+    if isinstance(start, (int, np.integer)):
+        orbit = mission_events('orbit', start, start)
+        start = orbit['start_time'][0]
+    if isinstance(stop, (int, np.integer)):
+        orbit = mission_events('orbit', stop, stop)
+        stop = orbit['end_time'][-1]
+    
     data_retriever = _get_selection_retriever(selection_type)
     return data_retriever(start, stop)
-
 
 def _get_selection_retriever(selection_type):
     '''
@@ -2201,11 +2205,11 @@ def _mission_data(start, stop, sc=None,
     
     # mission_events() returns numpy integers, so check for
     # those, too
-    if isinstance(start, int):
+    if isinstance(start, (int, np.integer)):
         start_orbit = start
     else:
         start_date = start
-    if isinstance(stop, int):
+    if isinstance(stop, (int, np.integer)):
         end_orbit = stop
     else:
         end_date = stop
@@ -2866,6 +2870,39 @@ def sort_files(files):
         fsort.append([files[i] for i, b in enumerate(bases) if b == ub])
 
     return tuple(fsort)
+
+
+def time_to_orbit(time, sc='mms1'):
+    '''
+    Identify the orbit in which a time falls.
+    
+    Parameters
+    ----------
+    time : `datetime.datetime`
+        Time within the orbit
+    sc : str
+        Spacecraft identifier
+    
+    Returns
+    -------
+    orbit : int
+        Orbit during which `time` occurs
+    '''
+    # sdc.mission_events filters by date, and the dates are right-exclusive:
+    # [tstart, tstop). For it to return data on the date of `time`, `time`
+    # must be rounded up to the next day. Start the time interval greater
+    # than one orbit prior than the start time. The desired orbit should then
+    # be the last orbit in the list
+    tstop = dt.datetime.combine(time.date() + dt.timedelta(days=1),
+                                dt.time(0, 0, 0))
+    tstart = tstop - dt.timedelta(days=10)
+    
+    orbit = mission_events('orbit', tstart, tstop, sc=sc)
+    
+    if (orbit['tstart'][-1] > tstart) or (orbit['tstop'][-1] < time):
+        ValueError('Did not find correct orbit!')
+    
+    return orbit['start_orbit'][-1]
 
 
 if __name__ == '__main__':

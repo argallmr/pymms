@@ -126,17 +126,27 @@ def _burst_data_segments_to_burst_segment(data):
 
 
 def _get_selections(type, start, stop,
-                    sort=True, combine=True, unique=True,
+                    sort=True, combine=True, latest=True, unique=False,
                     filter=None):
-    '''
-    Creator function for burst selections. See `selections`.
-    '''
+    
+    if latest and unique:
+        raise ValueError('latest and unique keywords '
+                         'are mutually exclusive.')
+    
+    # Burst selections can be made multiple times within the orbit.
+    # Multiple submissions will be appear as repeated entires with
+    # different create times, but only the last submission is the
+    # official submission. To ensure that the last submission is
+    # returned, look for selections submitted through the following
+    # orbit as well.
+    orbit_start = sdc.time_to_orbit(start)
+    orbit_stop = sdc.time_to_orbit(stop) + 1
     
     # Get the selections
-    data = sdc.burst_selections(type, start, stop)
+    data = sdc.burst_selections(type, orbit_start, orbit_stop)
     
     # Turn the data into BurstSegments. Adjacent segments returned
-    # by `sdc.sitl_selections have a 0 second gap between stop and
+    # by `sdc.sitl_selections` have a 0 second gap between stop and
     # start times. Those returned by `sdc.burst_data_segments` are
     # separated by 10 seconds.
     if type in ('abs-all', 'sitl', 'gls', 'mp-dl-unh'):
@@ -151,9 +161,19 @@ def _get_selections(type, start, stop,
     # Convert data into BurstSegments
     data = converter(data)
     
-    # Curate the data
+    if unique:
+        data = _prune_selections(data, orbit_start, orbit_stop)
+    
+    # Get rid of extra selections obtained by changing the
+    # start and stop interval
+    data = [segment
+            for segment in data
+            if (segment.tstart >= start) \
+            and (segment.tstop <= stop)]
+    
+    # Additional handling of data
     if combine:
-        combine_segments(data, delta_t=delta_t)
+        data = combine_segments(data)
     if sort:
         data = sort_segments(data)
     if unique:
@@ -162,6 +182,57 @@ def _get_selections(type, start, stop,
         data = filter_segments(data, filter)
     
     return data
+
+
+def _prune_selections(data, orbit_start, orbit_stop):
+    '''
+    '''
+    result = []
+    for orbit in range(orbit_start, orbit_stop+1):
+        # The start and end times of the sub-regions of interest.
+        # These are the times in which selections can be made for
+        # any given orbit.
+        sroi = sdc.mission_events('sroi', orbit, orbit)
+        tstart = min(sroi['tstart'])
+        tend = max(sroi['tend'])
+        
+        # Find the burst segments that were selected within the
+        # current SROI
+        create_time = None
+        orbit_segments = []
+        for idx, segment in enumerate(data):
+            # Filter out selections from the previous orbit(s)
+            # Stop when we get to the next orbit
+            if segment.tstop < tstart:
+                continue
+            if segment.tstart > tend:
+                break
+            
+            # Initialize with the first segment within the orbit.
+            # Create times are the same for all selections within
+            # a single submission. There may be several submissions
+            # per orbit.
+            if create_time is None:
+                create_time = segment.createtime
+            
+            # Keep segments from the same submission (create time).
+            # If there is a new submission within the orbit, take
+            # selections from the new submission and discard those
+            # from the old.
+            if create_time == segment.createtime:
+                orbit_segments.append(segment)
+            elif segment.createtime > create_time:
+                create_time = segment.createtime
+                orbit_segments = [segment]
+            else:
+                continue
+        
+        # Truncate the segments and append this orbit's submissions
+        # to the overall results.
+        data = data[idx:]
+        result.extend(orbit_segments)
+    
+    return result
 
 
 def _mission_events_to_burst_segment(data):
@@ -449,7 +520,7 @@ def metric(figtype=None):
     plt.show()
 
 
-def print_selections(data, full=False):
+def print_segments(data, full=False):
     '''
     Print details of the burst selections.
 
