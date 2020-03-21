@@ -4,7 +4,6 @@ import io
 import re
 import requests
 import csv
-from . import selections as sel
 from tqdm import tqdm
 import datetime as dt
 import numpy as np
