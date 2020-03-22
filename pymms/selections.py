@@ -127,7 +127,7 @@ def _burst_data_segments_to_burst_segment(data):
 
 def _get_selections(type, start, stop,
                     sort=False, combine=False, latest=True, unique=False,
-                    filter=None):
+                    metadata=False, filter=None):
     
     if latest and unique:
         raise ValueError('latest and unique keywords '
@@ -160,10 +160,17 @@ def _get_selections(type, start, stop,
     
     # Convert data into BurstSegments
     data = converter(data)
-    _get_segment_data(data, orbit_start, orbit_stop)
     
+    # Get metadata associated with orbit, sroi, and metadata
+    if metadata:
+        _get_segment_data(data, orbit_start, orbit_stop)
+    
+    # The official selections are those from the last submission
+    # containing selections within the science_roi. Get rid of
+    # all submissions except the last.
     if latest:
-        data = _prune_selections(data, orbit_start, orbit_stop)
+        data = _latest_segments(data, orbit_start, orbit_stop,
+                                sitl=(type == 'sitl+back'))
     
     # Get rid of extra selections obtained by changing the
     # start and stop interval
@@ -174,7 +181,7 @@ def _get_selections(type, start, stop,
     
     # Additional handling of data
     if combine:
-        data = combine_segments(data)
+        combine_segments(data, delta_t)
     if sort:
         data = sort_segments(data)
     if unique:
@@ -187,6 +194,29 @@ def _get_selections(type, start, stop,
 
 def _get_segment_data(data, orbit_start, orbit_stop, sc='mms1'):
     '''
+    Add metadata associated with the orbit, SROI, and SITL window
+    to each burst segment.
+    
+    Parameters
+    ----------
+    data : list of BurstSegments
+        Burst selections. Selections are altered in-place to
+        have new attributes:
+        Attribute            Description
+        ==================   ======================
+        orbit                Orbit number
+        orbit_tstart         Orbit start time
+        orbit_tstop          Orbit stop time
+        sroi                 SROI number
+        sroi_tstart          SROI start time
+        sroi_tstop           SROI stop time
+        sitl_window_tstart   SITL window start time
+        sitl_window_tstop    SITL window stop time
+        ==================   ======================
+    orbit_start, orbit_stop : int or np.integer
+        Orbit interval in which selections were made
+    sc : str
+        Spacecraft identifier
     '''
     idx = 0
     for iorbit in range(orbit_start, orbit_stop+1):
@@ -233,6 +263,22 @@ def _get_segment_data(data, orbit_start, orbit_stop, sc='mms1'):
 
 
 def _get_sroi_number(sroi, tstart, tstop):
+    '''
+    Determine which sub-region of interest (SROI) in which a given
+    time interval resides.
+    
+    Parameters
+    ----------
+    sroi : dict
+        SROI information for a specific orbit
+    tstart, tstop : `datetime.datetime`
+        Time interval
+    
+    Returns
+    -------
+    result : tuple
+       The SROI number and start and stop times. 
+    '''
     sroi_num = 0
     for sroi_tstart, sroi_tstop in zip(sroi['tstart'], sroi['tend']):
         sroi_num += 1
@@ -242,8 +288,34 @@ def _get_sroi_number(sroi, tstart, tstop):
     return sroi_num, sroi_tstart, sroi_tstop
 
 
-def _prune_selections(data, orbit_start, orbit_stop):
+def _latest_segments(data, orbit_start, orbit_stop, sitl=False):
     '''
+    Return the last burst selections submission from each orbit.
+    
+    Burst selections can be submitted multiple times but only
+    the latest file serves as the official selections file.
+    
+    For the SITL, the SITL makes selections within the SITL
+    window. If data is downlinked after the SITL window closes,
+    selections on that data are submitted separately into the
+    back structure and should be appended to the last submission
+    that took place within the SITL window.
+    
+    Parameters
+    ----------
+    data : list of BurstSegments
+        Burst segment selections
+    orbit_start, orbit_stop : int or np.integer
+        Orbits in which selections were made
+    sitl : bool
+        If true, the burst selections were made by the SITL and
+        there are back structure submissions to take into
+        consideration
+    
+    Returns
+    -------
+    results : list of BurstSegments
+        The latest burst selections
     '''
     result = []
     for orbit in range(orbit_start, orbit_stop+1):
@@ -253,6 +325,11 @@ def _prune_selections(data, orbit_start, orbit_stop):
         sroi = sdc.mission_events('sroi', orbit, orbit)
         tstart = min(sroi['tstart'])
         tend = max(sroi['tend'])
+        
+        # Need to know when the SITL window closes in order to
+        # keep submissions to the back structure.
+        if sitl:
+            sitl_window = sdc.mission_events('sitl_window', orbit, orbit)
         
         # Find the burst segments that were selected within the
         # current SROI
@@ -277,11 +354,22 @@ def _prune_selections(data, orbit_start, orbit_stop):
             # If there is a new submission within the orbit, take
             # selections from the new submission and discard those
             # from the old.
+            #
+            # Submissions to the back structure occur after the
+            # SITL window has closed and are in addition to whatever
+            # the latest submission was.
+            #
+            # GLS and ABS selections can occur after the SITL window
+            # closes, but those are treated the same as selections
+            # made within the SITL window.
             if create_time == segment.createtime:
                 orbit_segments.append(segment)
             elif segment.createtime > create_time:
-                create_time = segment.createtime
-                orbit_segments = [segment]
+                if sitl and (segment.createtime > sitl_window['tend'][0]):
+                    orbit_segments.append(segment)
+                else:
+                    create_time = segment.createtime
+                    orbit_segments = [segment]
             else:
                 continue
         
@@ -396,7 +484,11 @@ def filter_segments(data, filter):
     return [seg for seg in data if re.search(filter, seg.discussion)]
 
 
-def metric(figtype=None):
+def metric(figtype=None, sroi=None):
+    do_sroi=False
+    if sroi in (1, 2, 3):
+        do_sroi=True
+
     starttime = dt.datetime(2019, 10, 17)
 
     # Find SROI
@@ -404,32 +496,23 @@ def metric(figtype=None):
     start_date = dt.datetime(2019, 10, 19)
     #end_date = start_date + dt.timedelta(days=5)
     end_date = dt.datetime.now()
-
-    # Grab selections
-    abs_files = sdc.sitl_selections('abs_selections',
-                                    start_date=start_date, end_date=end_date)
-    gls_files = sdc.sitl_selections('gls_selections', gls_type='mp-dl-unh',
-                                    start_date=start_date, end_date=end_date)
-
-    # Read the files
-    abs_data = sdc.read_selections(abs_files)
-    sitl_data = sdc.burst_data_segments(start_date, end_date)
-    gls_data = sdc.read_selections(gls_files)
-
-    # ABS, SITL, and GLS files/data are often duplicated,
-    # out of order, and/or split into smaller chunks. We
-    # want to take only unique, aggregate selections.
-    abs_data = sort(abs_data)
-    abs_data = remove_duplicates(abs_data)
-    combine(abs_data)
-
-    sitl_data = sort(sitl_data)
-    combine(sitl_data, delta_t=10)
-    mp_data = re_filter(sitl_data, '(MP|Magnetopause)')
-
-    gls_data = sort(gls_data)
-    gls_data = remove_duplicates(gls_data)
-    combine(gls_data)
+    
+    abs_data = selections('abs', start_date, end_date,
+                          latest=True, combine=True, metadata=do_sroi)
+    
+    gls_data = selections('mp-dl-unh', start_date, end_date,
+                          latest=True, combine=True, metadata=do_sroi)
+    
+    sitl_data = selections('sitl+back', start_date, end_date,
+                           latest=True, combine=True, metadata=do_sroi)
+    
+    # Filter by SROI
+    if do_sroi:
+        abs_data = [s for s in abs_data if s.sroi == sroi]
+        sitl_data = [s for s in sitl_data if s.sroi == sroi]
+        gls_data = [s for s in gls_data if s.sroi == sroi]
+    
+    mp_data = filter_segments(sitl_data, '(MP|Magnetopause)')
 
     # Find overlap between GLS and SITL
     gls_sitl = []
@@ -567,8 +650,11 @@ def metric(figtype=None):
     
     # Save the figure
     if figtype is not None:
+        sroi_str = ''
+        if do_sroi:
+            sroi_str = '_sroi{0:d}'.format(sroi)
         filename = (output_dir
-                    / '_'.join(('selections_metric',
+                    / '_'.join(('selections_metric' + sroi_str,
                                 start_date.strftime('%Y%m%d%H%M%S'),
                                 end_date.strftime('%Y%m%d%H%M%S')
                                 )))
@@ -591,16 +677,19 @@ def print_segments(data, full=False):
     if full:
         source_len = max(len(s.sourceid) for s in data)
         source_len = max(source_len, 8)
-        fmt_str = '{0:>19}   {1:>19}   {2:>19}   {3:>5}   ' \
-                  '{4:>'+str(source_len)+'}   {5}'
-        print(fmt_str.format('TSTART', 'TSTOP', 'CREATETIME', 'FOM',
-                             'SOURCEID', 'DISCUSSION')
+        header_fmt = '{0:>19}   {1:>19}   {2:>19}   {3:>5}   ' \
+                     '{4:>'+str(source_len)+'}   {5}'
+        data_fmt = '{0:>19}   {1:>19}   {2:>19}   {3:5.1f}   ' \
+                    '{4:>'+str(source_len)+'}   {5}'
+        print(header_fmt.format('TSTART', 'TSTOP', 'CREATETIME',
+                                'FOM', 'SOURCEID', 'DISCUSSION')
               )
         for s in data:
             createtime = dt.datetime.strftime(s.createtime,
                                               '%Y-%m-%d %H:%M:%S')
-            print(fmt_str.format(s.start_time, s.stop_time, createtime,
-                                 s.fom, s.sourceid, s.discussion)
+            print(data_fmt.format(s.start_time, s.stop_time,
+                                  createtime, s.fom, s.sourceid,
+                                  s.discussion)
                   )
         return
     
@@ -832,8 +921,8 @@ def selection_overlap(ref, tests):
 
 
 def selections(type, start, stop,
-               sort=True, combine=True, unique=True,
-               filter=None):
+               sort=False, combine=False, latest=True, unique=False,
+               metadata=False, filter=None):
     '''
     Factory function for burst data selections.
     
@@ -868,6 +957,7 @@ def selections(type, start, stop,
     '''
     return _get_selections(type, start, stop,
                            sort=sort, combine=combine, unique=unique,
+                           latest=latest, metadata=metadata,
                            filter=filter)
 
 

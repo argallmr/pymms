@@ -1160,10 +1160,10 @@ def burst_selections(selection_type, start, stop):
     '''
     if isinstance(start, (int, np.integer)):
         orbit = mission_events('orbit', start, start)
-        start = orbit['start_time'][0]
+        start = min(orbit['tstart'])
     if isinstance(stop, (int, np.integer)):
         orbit = mission_events('orbit', stop, stop)
-        stop = orbit['end_time'][-1]
+        stop = max(orbit['tend'])
     
     data_retriever = _get_selection_retriever(selection_type)
     return data_retriever(start, stop)
@@ -1256,7 +1256,7 @@ def _get_gls_data(start, stop):
     
     # Display bad data
     if (fskip > 0) | (nskip > 0) | (nexpand > 0):
-        print('Selection Adjustments:')
+        print('GLS Selection Adjustments:')
         print('  # files skipped:    {}'.format(fskip))
         print('  # entries skipped:  {}'.format(nskip))
         print('  # entries expanded: {}'.format(nexpand))
