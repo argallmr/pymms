@@ -2871,7 +2871,7 @@ def sort_files(files):
     return tuple(fsort)
 
 
-def time_to_orbit(time, sc='mms1'):
+def time_to_orbit(time, sc='mms1', delta=10):
     '''
     Identify the orbit in which a time falls.
     
@@ -2881,6 +2881,10 @@ def time_to_orbit(time, sc='mms1'):
         Time within the orbit
     sc : str
         Spacecraft identifier
+    delta : int
+        Number of days around around the time of interest in
+        which to search for the orbit. Should be the duration
+        of at least one orbit.
     
     Returns
     -------
@@ -2892,16 +2896,19 @@ def time_to_orbit(time, sc='mms1'):
     # must be rounded up to the next day. Start the time interval greater
     # than one orbit prior than the start time. The desired orbit should then
     # be the last orbit in the list
-    tstop = dt.datetime.combine(time.date() + dt.timedelta(days=1),
+    tstop = dt.datetime.combine(time.date() + dt.timedelta(days=delta),
                                 dt.time(0, 0, 0))
-    tstart = tstop - dt.timedelta(days=10)
+    tstart = tstop - dt.timedelta(days=2*delta)
+    orbits = mission_events('orbit', tstart, tstop, sc=sc)
     
-    orbit = mission_events('orbit', tstart, tstop, sc=sc)
-    
-    if (orbit['tstart'][-1] > tstart) or (orbit['tstop'][-1] < time):
+    orbit = None
+    for idx in range(len(orbits['tstart'])):
+        if (time > orbits['tstart'][idx]) and (time < orbits['tend'][idx]):
+            orbit = orbits['start_orbit'][idx]
+    if orbit is None:
         ValueError('Did not find correct orbit!')
     
-    return orbit['start_orbit'][-1]
+    return orbit
 
 
 if __name__ == '__main__':
