@@ -484,10 +484,80 @@ def filter_segments(data, filter):
     return [seg for seg in data if re.search(filter, seg.discussion)]
 
 
-def metric(figtype=None, sroi=None):
+def plot_metric(ref_data, test_data, fig, labels, location,
+                nbins=10):
+    '''
+    Visualize the overlap between segments.
+    
+    Parameters
+    ----------
+    ref_data : list of `BurstSegment`s
+        Reference burst segments
+    test_data : list of `BurstSegment`s
+        Test burst segments. Determine which test segments
+        overlap with the reference segments and by how much
+    labels : tuple of str
+        Labels for the reference and test segments
+    location : tuple
+        Location of the figure (row, col, nrows, ncols)
+    nbins : int
+        Number of histogram bins to create
+    
+    Returns:
+    --------
+    ax : `matplotlib.pyplot.Axes`
+        Axes in which data is displayed
+    ref_test_data : list of `BurstSegment`s
+        Reference data that falls within the [start, stop] times
+        of the test data.
+    '''
+    
+    # Determine by how much the test data overlaps with
+    # the reference data.
+    ref_test = []
+    ref_test_data = []
+    ref_test = [selection_overlap(segment, test_data)
+                for segment in ref_data]
+    
+    # Overlap statistics
+    #   - Number of segments selected
+    #   - Percentage of segments selected
+    #   - Percent overlap from each segment
+    ref_test_selected = sum(selection['n_selections'] > 0
+                            for selection in ref_test)
+    ref_test_pct_selected = ref_test_selected / len(ref_test) * 100.0
+    ref_test_pct_overlap = [selection['pct_overlap'] for selection in ref_test]
+    
+    # Calculate the plot index from the (row,col) subplot location
+    plot_idx = lambda rowcol, ncols : (rowcol[0]-1)*ncols + rowcol[1]
+    
+    # Create a figure
+    ax = fig.add_subplot(location[2], location[3],
+                         plot_idx(location[0:2], location[3]))
+    hh = ax.hist(ref_test_pct_overlap, bins=nbins, range=(0, 100))
+    #ax.set_xlabel('% Overlap Between {0} and {1} Segments'.format(*labels))
+    if location[0] == location[2]:
+        ax.set_xlabel('% Overlap per Segment')
+    if location[1] == 1:
+        ax.set_ylabel('Occurrence')
+    ax.text(0.5, 0.98, '{0:4.1f}% of {1:d}'
+              .format(ref_test_pct_selected, len(ref_test)),
+              verticalalignment='top', horizontalalignment='center',
+              transform=ax.transAxes)
+    ax.set_title('{0} Segments\nSelected by {1}'.format(*labels))
+    
+    return ax, ref_test
+
+
+def metric(sroi=None, output_dir=None, figtype=None):
     do_sroi=False
     if sroi in (1, 2, 3):
         do_sroi=True
+    
+    if output_dir is None:
+        output_dir = pathlib.Path('~/').expanduser()
+    else:
+        output_dir = pathlib.Path(output_dir).expanduser()
 
     starttime = dt.datetime(2019, 10, 17)
 
@@ -512,141 +582,60 @@ def metric(figtype=None, sroi=None):
         sitl_data = [s for s in sitl_data if s.sroi == sroi]
         gls_data = [s for s in gls_data if s.sroi == sroi]
     
-    mp_data = filter_segments(sitl_data, '(MP|Magnetopause)')
-
-    # Find overlap between GLS and SITL
-    gls_sitl = []
-    for segment in gls_data:
-        if (segment.tstart <= sitl_data[-1].tstop) & \
-                (segment.tstop >= sitl_data[0].tstart):
-            gls_sitl.append(selection_overlap(segment, sitl_data))
-
-    # Find overlap between SITL MP Crossings and GLS
-    sitl_mp_gls = []
-    for segment in mp_data:
-        if (segment.tstart <= gls_data[-1].tstop) & \
-                (segment.tstop >= gls_data[0].tstart):
-            sitl_mp_gls.append(selection_overlap(segment, gls_data))
-
-    # Find overlap between GLS and SITL MP
-    gls_sitl_mp = []
-    for segment in gls_data:
-        if (segment.tstart <= mp_data[-1].tstop) & \
-                (segment.tstop >= mp_data[0].tstart):
-            gls_sitl_mp.append(selection_overlap(segment, mp_data))
-
-    # Find overlap between ABS and SITL
-    abs_sitl = []
-    for segment in abs_data:
-        if (segment.tstart <= sitl_data[-1].tstop) & \
-                (segment.tstop >= sitl_data[0].tstart):
-            abs_sitl.append(selection_overlap(segment, sitl_data))
-
-    # Find overlap between SITL MP and ABS
-    sitl_mp_abs = []
-    for segment in mp_data:
-        if (segment.tstart <= abs_data[-1].tstop) & \
-                (segment.tstop >= abs_data[0].tstart):
-            sitl_mp_abs.append(selection_overlap(segment, abs_data))
-
-    # Find overlap between SITL and ABS
-    sitl_abs = []
-    for segment in sitl_data:
-        if (segment.tstart <= abs_data[-1].tstop) & \
-                (segment.tstop >= abs_data[0].tstart):
-            sitl_abs.append(selection_overlap(segment, abs_data))
-
-    # Aggregate results
-    gls_sitl_selected = sum(selection['n_selections'] > 0 for selection in gls_sitl)
-    sitl_mp_gls_selected = sum(selection['n_selections'] > 0 for selection in sitl_mp_gls)
-    gls_sitl_mp_selected = sum(selection['n_selections'] > 0 for selection in gls_sitl_mp)
-    abs_sitl_selected = sum(selection['n_selections'] > 0 for selection in abs_sitl)
-    sitl_mp_abs_selected = sum(selection['n_selections'] > 0 for selection in sitl_mp_abs)
-    sitl_abs_selected = sum(selection['n_selections'] > 0 for selection in sitl_abs)
-
-    gls_sitl_pct_selected = gls_sitl_selected / len(gls_sitl) * 100.0
-    sitl_mp_gls_pct_selected = sitl_mp_gls_selected / len(sitl_mp_gls) * 100.0
-    gls_sitl_mp_pct_selected = gls_sitl_mp_selected / len(gls_sitl_mp) * 100.0
-    abs_sitl_pct_selected = abs_sitl_selected / len(abs_sitl) * 100.0
-    sitl_mp_abs_pct_selected = sitl_mp_abs_selected / len(sitl_mp_abs) * 100.0
-    sitl_abs_pct_selected = sitl_abs_selected / len(sitl_abs) * 100.0
-
-    gls_sitl_pct_overlap = [selection['pct_overlap'] for selection in gls_sitl]
-    sitl_mp_gls_pct_overlap = [selection['pct_overlap'] for selection in sitl_mp_gls]
-    gls_sitl_mp_pct_overlap = [selection['pct_overlap'] for selection in gls_sitl_mp]
-    abs_sitl_pct_overlap = [selection['pct_overlap'] for selection in abs_sitl]
-    sitl_mp_abs_pct_overlap = [selection['pct_overlap'] for selection in sitl_mp_abs]
-    sitl_abs_pct_overlap = [selection['pct_overlap'] for selection in sitl_abs]
-
+    sitl_mp_data = filter_segments(sitl_data, '(MP|Magnetopause)')
+    
     # Create a figure
-    fig = plt.figure(figsize=(8.5,7))
-    fig.subplots_adjust(hspace=0.65, wspace=0.4)
-
-    # GLS-SITL selections
-    ax = fig.add_subplot(3, 2, 1)
-    hh = ax.hist(gls_sitl_pct_overlap, bins=20, range=(0, 100))
-    ax.set_xlabel('% Overlap Between GLS and SITL Segment')
-    ax.set_ylabel('Occurrence')
-    ax.text(0.5, 0.98, '{0:4.1f}% of {1:d}'
-              .format(gls_sitl_pct_selected, len(gls_sitl)),
-              verticalalignment='top', horizontalalignment='center',
-              transform=ax.transAxes)
-    ax.set_title('GLS Segments Selected by SITL')
-
-    # SITL MP-GSL selections
-    ax = fig.add_subplot(3, 2, 3)
-    hh = ax.hist(sitl_mp_gls_pct_overlap, bins=20, range=(0, 100))
-    ax.set_xlabel('% Overlap Between SITL and GLS Segment')
-    ax.set_ylabel('Occurrence')
-    ax.text(0.5, 0.98, '{0:4.1f}% of {1:d}'
-              .format(sitl_mp_gls_pct_selected, len(sitl_mp_gls)),
-              verticalalignment='top', horizontalalignment='center',
-              transform=ax.transAxes)
-    ax.set_title('SITL MP Segments Selected by GLS')
-
-    # GLS-SITL MP selections
-    ax = fig.add_subplot(3, 2, 5)
-    hh = ax.hist(gls_sitl_mp_pct_overlap, bins=20, range=(0, 100))
-    ax.set_xlabel('% Overlap Between GLS and SITL Segment')
-    ax.set_ylabel('Occurrence')
-    ax.text(0.5, 0.98, '{0:4.1f}% of {1:d}'
-            .format(gls_sitl_mp_pct_selected, len(gls_sitl_mp)),
-            verticalalignment='top', horizontalalignment='center',
-            transform=ax.transAxes)
-    ax.set_title('GLS Segments Selected by SITL MP')
-
-    # ABS-SITL selections
-    ax = fig.add_subplot(3, 2, 2)
-    hh = ax.hist(abs_sitl_pct_overlap, bins=20, range=(0, 100))
-    ax.set_xlabel('% Overlap Between ABS and SITL Segment')
-    ax.set_ylabel('Occurrence')
-    ax.text(0.5, 0.98, '{0:4.1f}% of {1:d}'
-            .format(abs_sitl_pct_selected, len(abs_sitl)),
-            verticalalignment='top', horizontalalignment='center',
-            transform=ax.transAxes)
-    ax.set_title('ABS Segments Selected by SITL')
-
-    # SITL MP-ABS selections
-    ax = fig.add_subplot(3, 2, 4)
-    hh = ax.hist(sitl_mp_abs_pct_overlap, bins=20, range=(0, 100))
-    ax.set_xlabel('% Overlap Between SITL and ABS Segment')
-    ax.set_ylabel('Occurrence')
-    ax.text(0.5, 0.98, '{0:4.1f}% of {1:d}'
-            .format(sitl_mp_abs_pct_selected, len(sitl_mp_abs)),
-            verticalalignment='top', horizontalalignment='center',
-            transform=ax.transAxes)
-    ax.set_title('SITL MP Segments Selected by ABS')
-
-    # SITL-ABS selections
-    ax = fig.add_subplot(3, 2, 6)
-    hh = ax.hist(sitl_abs_pct_overlap, bins=20, range=(0, 100))
-    ax.set_xlabel('% Overlap Between SITL and ABS Segment')
-    ax.set_ylabel('Occurrence')
-    ax.text(0.5, 0.98, '{0:4.1f}% of {1:d}'
-            .format(sitl_abs_pct_selected, len(sitl_abs)),
-            verticalalignment='top', horizontalalignment='center',
-            transform=ax.transAxes)
-    ax.set_title('SITL Segments Selected by ABS')
+    nbins = 10
+    nrows = 4
+    ncols = 3
+    fig = plt.figure(figsize=(8.5, 10))
+    fig.subplots_adjust(hspace=0.55, wspace=0.3)
+    
+    # GLS-SITL Comparison
+    ax, gls_sitl = plot_metric(gls_data, sitl_data, fig,
+                               ('GLS', 'SITL'), (1, 1, nrows, ncols),
+                               nbins=nbins)
+    ax, sitl_gls = plot_metric(sitl_data, gls_data, fig,
+                               ('SITL', 'GLS'), (2, 1, nrows, ncols),
+                               nbins=nbins)
+    ax, gls_sitl_mp = plot_metric(gls_data, sitl_mp_data, fig,
+                                  ('GLS', 'SITL MP'), (3, 1, nrows, ncols),
+                                  nbins=nbins)
+    ax, sitl_mp_gls = plot_metric(sitl_mp_data, gls_data, fig,
+                                  ('SITL MP', 'GLS'), (4, 1, nrows, ncols),
+                                  nbins=nbins)
+    
+    # ABS-SITL Comparison
+    ax, abs_sitl = plot_metric(abs_data, sitl_data, fig,
+                               ('ABS', 'SITL'), (1, 2, nrows, ncols),
+                               nbins=nbins)
+    ax, sitl_abs = plot_metric(sitl_data, abs_data, fig,
+                               ('SITL', 'ABS'), (2, 2, nrows, ncols),
+                               nbins=nbins)
+    ax, abs_sitl_mp = plot_metric(abs_data, sitl_mp_data, fig,
+                                  ('ABS', 'SITL MP'), (3, 2, nrows, ncols),
+                                  nbins=nbins)
+    ax, sitl_mp_abs = plot_metric(sitl_mp_data, abs_data, fig,
+                                  ('SITL MP', 'ABS'), (4, 2, nrows, ncols),
+                                  nbins=nbins)
+    
+    # GLS-ABS Comparison
+    abs_mp_data = [abs_data[idx]
+                   for idx, s in enumerate(abs_sitl_mp)
+                   if s['n_selections'] > 0]
+    
+    ax, gls_abs = plot_metric(gls_data, abs_data, fig,
+                              ('GLS', 'ABS'), (1, 3, nrows, ncols),
+                              nbins=nbins)
+    ax, abs_gls = plot_metric(abs_data, gls_data, fig,
+                              ('ABS', 'GLS'), (2, 3, nrows, ncols),
+                              nbins=nbins)
+    ax, gls_abs_mp = plot_metric(gls_data, abs_mp_data, fig,
+                                 ('GLS', 'ABS MP'), (3, 3, nrows, ncols),
+                                 nbins=nbins)
+    ax, abs_mp_gls = plot_metric(abs_mp_data, gls_data, fig,
+                                 ('ABS MP', 'GLS'), (4, 3, nrows, ncols),
+                                 nbins=nbins)
     
     # Save the figure
     if figtype is not None:
