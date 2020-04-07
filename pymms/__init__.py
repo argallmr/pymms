@@ -1,12 +1,8 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
-Created on Wed Mar  7 20:57:53 2018
+pymms
 
-@author: argall
+Open source Python tools for accessing data from NASA's
+Magnetospheric Multiscale (MMS) mission.
 """
-from . import mrmms_sdc_api
-# from . import mms_utils
-from . import sdc_login
-
-__all__ = ['mrmms_sdc_api', 'mms_utils', 'sdc_login']
+from pymms.config import load_config
+config = load_config()
