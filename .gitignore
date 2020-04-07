@@ -16,5 +16,6 @@ dist/
 
 # Other
 .DS_Store
+*config.ini
 notebooks/
 cdf/
