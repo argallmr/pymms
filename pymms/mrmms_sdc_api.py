@@ -4,6 +4,7 @@ import io
 import re
 import requests
 import csv
+import pymms
 from tqdm import tqdm
 import datetime as dt
 import numpy as np
@@ -13,6 +14,13 @@ import urllib3
 import warnings
 from scipy.io import readsav
 from getpass import getpass
+
+data_root = pymms.config['data_root']
+dropbox_root = pymms.config['dropbox_root']
+mirror_root = pymms.config['mirror_root']
+
+username = pymms.config['username']
+password = pymms.config['password']
 
 
 class MrMMS_SDC_API:
@@ -27,10 +35,7 @@ class MrMMS_SDC_API:
         instr (str,list):    Instrument IDs
         mode (str,list):     Data rate mode ('slow', 'fast', 'srvy', 'brst')
         level (str,list):    Data quality level ('l1a', 'l1b', 'sitl', 'l2pre', 'l2', 'l3')
-        anc_product (str):   Name of an ancillary data product. Automatically sets
-                             `data_type='ancillary'`.
         data_type (str):     Type of data ('ancillary', 'hk', 'science')
-        data_root (str):     Location where MMS directory structure begins
         end_date (str):      End date of data interval, formatted as either %Y-%m-%d or
                              %Y-%m-%dT%H:%M:%S.
         files (str,list):    File names. If set, automatically sets `sc`, `instr`, `mode`,
@@ -46,13 +51,9 @@ class MrMMS_SDC_API:
     """
 
     def __init__(self, sc=None, instr=None, mode=None, level=None,
-                 anc_product=None,
                  data_type='science',
-                 data_root=None,
-                 dropbox_root=None,
                  end_date=None,
                  files=None,
-                 mirror_root=None,
                  offline=False,
                  optdesc=None,
                  site='public',
@@ -64,13 +65,10 @@ class MrMMS_SDC_API:
         #   - Put files last because it will reset most fields
         self.site = site
 
-        self.anc_product = anc_product
         self.data_type = data_type
-        self.dropbox_root = dropbox_root
         self.end_date = end_date
         self.instr = instr
         self.level = level
-        self.mirror_root = mirror_root
         self.mode = mode
         self.offline = offline
         self.optdesc = optdesc
@@ -80,19 +78,16 @@ class MrMMS_SDC_API:
 
         self.files = files
 
-        # Setup download directory
-        #   - $HOME/data/mms/
-        if data_root is None:
-            data_root = os.path.join(os.path.expanduser('~'), 'data', 'mms')
-            if not os.path.isdir(data_root):
-                os.makedirs(data_root, exist_ok=True)
-
-        self.data_root  = data_root
+        self._data_root  = data_root
+        self._dropbox_root = dropbox_root
+        self._mirror_root = mirror_root
         self._sdc_home  = 'https://lasp.colorado.edu/mms/sdc'
         self._info_type = 'download'
 
         # Create a persistent session
         self._session = requests.Session()
+        if (username is not None) and (password is not None):
+            self._session.auth = (username, password)
 
     def __str__(self):
         return self.url()
@@ -105,10 +100,7 @@ class MrMMS_SDC_API:
         #   - Unset other complementary options
         #   - Ensure that at least one of (download | file_names |
         #     version_info | file_info) are true
-        if name == 'anc_product':
-            self.data_type = 'ancillary'
-
-        elif name == 'data_type':
+        if name == 'data_type':
             if 'gls_selections' in value:
                 if value[15:] not in ('mp-dl-unh',):
                     raise ValueError('Unknown GLS Selections type.')
@@ -637,9 +629,9 @@ class MrMMS_SDC_API:
 
         # Search the mirror or local directory
         if mirror:
-            data_root = self.mirror_root
+            data_root = self._mirror_root
         else:
-            data_root = self.data_root
+            data_root = self._data_root
 
         # If no start or end date have been defined,
         #   - Start at beginning of mission
@@ -729,7 +721,7 @@ class MrMMS_SDC_API:
         #   - basename: [type]_selections_[optdesc]_YYYY-MM-DD-hh-mm-ss.sav
         # To get year, index from end to skip optional descriptor
         if parts[1] == 'selections':
-            path = os.path.join(self.data_root, 'sitl',
+            path = os.path.join(self._data_root, 'sitl',
                                 '_'.join(parts[0:2]),
                                 filename)
 
@@ -738,7 +730,7 @@ class MrMMS_SDC_API:
         #   - basename: sc_instr_mode_level[_optdesc]_YYYYMMDDhhmmss_vX.Y.Z.cdf
         # Index from end to catch the optional descriptor, if it exists
         elif parts[2] == 'brst':
-            path = os.path.join(self.data_root, *parts[0:-2],
+            path = os.path.join(self._data_root, *parts[0:-2],
                                 parts[-2][0:4], parts[-2][4:6],
                                 parts[-2][6:8], filename)
 
@@ -747,7 +739,7 @@ class MrMMS_SDC_API:
         #   - basename: sc_instr_mode_level[_optdesc]_YYYYMMDD_vX.Y.Z.cdf
         # Index from end to catch the optional descriptor, if it exists
         else:
-            path = os.path.join(self.data_root, *parts[0:-2],
+            path = os.path.join(self._data_root, *parts[0:-2],
                                 parts[-2][0:4], parts[-2][4:6], filename)
 
         return path
@@ -891,7 +883,7 @@ class MrMMS_SDC_API:
         #   - Unpack with *: https://docs.python.org/2/tutorial/controlflow.html#unpacking-argument-lists
         local_names = list()
         for file in remote_names:
-            local_names.append(os.path.join(self.data_root,
+            local_names.append(os.path.join(self._data_root,
                                *file.split('/')[2:]))
 
         if (len(remote_names) == 1) & (type(remote_names) == 'str'):
