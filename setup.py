@@ -3,9 +3,23 @@ from setuptools import setup
 with open("README.md", "r") as fh:
     long_description = fh.read()
 
+# Read the version file
+# https://martin-thoma.com/python-package-versions/
+# https://stackoverflow.com/questions/436198/what-is-an-alternative-to-execfile-in-python-3/437857#437857
+def execfile(filename, globals=None, locals=None):
+    if globals is None:
+        globals = sys._getframe(1).f_globals
+    if locals is None:
+        locals = sys._getframe(1).f_locals
+    with open(filename, "rb") as fh:
+        exec(compile(fh.read(), filename, 'exec'), globals, locals)
+
+# execute the file
+execfile(os.path.normpath(os.path.join(__file__, '..', '_version.py')))
+
 setup(
       name = "nasa-pymms",
-      version = "0.1.0",
+      version = __version__,
       author = "Matthew R. Argall",
       author_email = "argallmr@gmail.com",
       description = "Access data from the MMS mission via its API.",
@@ -24,11 +38,11 @@ setup(
       keywords = "physics space-physics MMS",
       packages = ["pymms"],
       install_requires = ["numpy >= 1.8",
-                          "requests",
-                          "scipy", 
-                          "tqdm",
+                          "requests>=2.22.0",
+                          "scipy>=1.4.1", 
+                          "tqdm>=4.36.1",
                           "cdflib",
-                          "matplotlib"
+                          "matplotlib>=3.1.1"
                           ],
       python_requires = '>=3.6'
       )
