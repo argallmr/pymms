@@ -21,10 +21,10 @@ def get_config_file():
     """
     # Get user configuration location
     module_dir = Path(pymms.__file__)
-    config_file_1 = module_dir / '..' / '..' / 'config.ini'
+    config_file_1 = module_dir.parent / 'config.ini'
     config_file_1 = config_file_1.resolve()
 
-    config_file_2 = module_dir / '..' / '..' / 'config_template.ini'
+    config_file_2 = module_dir.parent / 'config_template.ini'
     config_file_2 = config_file_2.resolve()
     
     for f in [config_file_1, config_file_2]:

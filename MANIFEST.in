@@ -1,8 +1,4 @@
-# Include the README
 include README.md
-
-# Include the license file
 include LICENSE.rst
-
-# Include the template configuration file
-include config_template.ini
+include pymms/config_template.ini
+include pymms/_version.py
