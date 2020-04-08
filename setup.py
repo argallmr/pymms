@@ -39,6 +39,7 @@ setup(
                      "Natural Language :: English"],
       keywords = "physics space-physics MMS",
       packages = ["pymms"],
+      include_package_data = True,
       install_requires = ["numpy >= 1.8",
                           "requests>=2.22.0",
                           "scipy>=1.4.1", 
