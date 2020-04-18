@@ -19,8 +19,8 @@ data_root = pymms.config['data_root']
 dropbox_root = pymms.config['dropbox_root']
 mirror_root = pymms.config['mirror_root']
 
-username = pymms.config['username']
-password = pymms.config['password']
+mms_username = pymms.config['username']
+mms_password = pymms.config['password']
 
 
 class MrMMS_SDC_API:
@@ -86,8 +86,8 @@ class MrMMS_SDC_API:
 
         # Create a persistent session
         self._session = requests.Session()
-        if (username is not None) and (password is not None):
-            self._session.auth = (username, password)
+        if (mms_username is not None) and (mms_password is not None):
+            self._session.auth = (mms_username, mms_password)
 
     def __str__(self):
         return self.url()
@@ -218,11 +218,16 @@ class MrMMS_SDC_API:
         elif response.status_code == 401:
             print('Log-in Required')
 
-            maxAttempts = 3
+            maxAttempts = 4
             nAttempts = 1
             while nAttempts <= maxAttempts:
-                # Save log-in credentials and request again
-                self.login()
+                # First time through will automatically use the
+                # log-in information from the config file. If that
+                # information is wrong/None, ask explicitly
+                if nAttempts == 1:
+                    self.login(mms_username, mms_password)
+                else:
+                    self.login()
 
                 # Remake the request
                 #   - Ideally, self._session.send(response.request)
@@ -690,6 +695,7 @@ class MrMMS_SDC_API:
         # Ask for inputs
         if username is None:
             username = input('username: ')
+
         if password is None:
             password = input('password: ')
 
