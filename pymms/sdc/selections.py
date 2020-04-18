@@ -100,12 +100,12 @@ def _burst_data_segments_to_burst_segment(data):
     '''
     Turn selections created by `MrMMS_SDC_API.burst_data_segements` and turn
     them into `BurstSegment` instances.
-    
+
     Parameters
     ----------
     data : dict
         Data associated with each burst segment
-    
+
     Returns
     -------
     result : list of `BurstSegment`
@@ -128,11 +128,11 @@ def _burst_data_segments_to_burst_segment(data):
 def _get_selections(type, start, stop,
                     sort=False, combine=False, latest=True, unique=False,
                     metadata=False, filter=None):
-    
+
     if latest and unique:
         raise ValueError('latest and unique keywords '
                          'are mutually exclusive.')
-    
+
     # Burst selections can be made multiple times within the orbit.
     # Multiple submissions will be appear as repeated entires with
     # different create times, but only the last submission is the
@@ -141,10 +141,10 @@ def _get_selections(type, start, stop,
     # orbit as well.
     orbit_start = sdc.time_to_orbit(start)
     orbit_stop = sdc.time_to_orbit(stop) + 1
-    
+
     # Get the selections
     data = sdc.burst_selections(type, orbit_start, orbit_stop)
-    
+
     # Turn the data into BurstSegments. Adjacent segments returned
     # by `sdc.sitl_selections` have a 0 second gap between stop and
     # start times. Those returned by `sdc.burst_data_segments` are
@@ -157,28 +157,28 @@ def _get_selections(type, start, stop,
         converter = _burst_data_segments_to_burst_segment
     else:
         raise ValueError('Invalid selections type {}'.format(type))
-    
+
     # Convert data into BurstSegments
     data = converter(data)
-    
+
     # Get metadata associated with orbit, sroi, and metadata
     if metadata:
         _get_segment_data(data, orbit_start, orbit_stop)
-    
+
     # The official selections are those from the last submission
     # containing selections within the science_roi. Get rid of
     # all submissions except the last.
     if latest:
         data = _latest_segments(data, orbit_start, orbit_stop,
                                 sitl=(type == 'sitl+back'))
-    
+
     # Get rid of extra selections obtained by changing the
     # start and stop interval
     data = [segment
             for segment in data
             if (segment.tstart >= start) \
             and (segment.tstop <= stop)]
-    
+
     # Additional handling of data
     if combine:
         combine_segments(data, delta_t)
@@ -188,7 +188,7 @@ def _get_selections(type, start, stop,
         data = remove_duplicate_segments(data)
     if filter is not None:
         data = filter_segments(data, filter)
-    
+
     return data
 
 
@@ -196,7 +196,7 @@ def _get_segment_data(data, orbit_start, orbit_stop, sc='mms1'):
     '''
     Add metadata associated with the orbit, SROI, and SITL window
     to each burst segment.
-    
+
     Parameters
     ----------
     data : list of BurstSegments
@@ -228,13 +228,13 @@ def _get_segment_data(data, orbit_start, orbit_stop, sc='mms1'):
         window = sdc.mission_events('sitl_window', iorbit, iorbit)
         tstart = min(sroi['tstart'])
         tend = max(sroi['tend'])
-        
+
         # Find the burst segments that were selected within the
         # current SROI
-        
+
         while idx < len(data):
             segment = data[idx]
-            
+
             # Filter out selections from the previous orbit(s)
             # Stop when we get to the next orbit
             if segment.tstop < tstart:
@@ -242,7 +242,7 @@ def _get_segment_data(data, orbit_start, orbit_stop, sc='mms1'):
                 continue
             if segment.tstart > tend:
                 break
-            
+
             # Keep segments from the same submission (create time).
             # If there is a new submission within the orbit, take
             # selections from the new submission and discard those
@@ -250,15 +250,15 @@ def _get_segment_data(data, orbit_start, orbit_stop, sc='mms1'):
             segment.orbit = iorbit
             segment.orbit_tstart = orbit['tstart'][0]
             segment.orbit_tstop = orbit['tend'][0]
-            
+
             sroi_data = _get_sroi_number(sroi, segment.tstart, segment.tstop)
             segment.sroi = sroi_data[0]
             segment.sroi_tstart = sroi_data[1]
             segment.sroi_tstop = sroi_data[2]
-            
+
             segment.sitl_window_tstart = window['tstart']
             segment.sitl_window_tstop = window['tend']
-            
+
             idx += 1
 
 
@@ -266,41 +266,41 @@ def _get_sroi_number(sroi, tstart, tstop):
     '''
     Determine which sub-region of interest (SROI) in which a given
     time interval resides.
-    
+
     Parameters
     ----------
     sroi : dict
         SROI information for a specific orbit
     tstart, tstop : `datetime.datetime`
         Time interval
-    
+
     Returns
     -------
     result : tuple
-       The SROI number and start and stop times. 
+       The SROI number and start and stop times.
     '''
     sroi_num = 0
     for sroi_tstart, sroi_tstop in zip(sroi['tstart'], sroi['tend']):
         sroi_num += 1
         if (tstart >= sroi_tstart) and (tstop <= sroi_tstop):
             break
-    
+
     return sroi_num, sroi_tstart, sroi_tstop
 
 
 def _latest_segments(data, orbit_start, orbit_stop, sitl=False):
     '''
     Return the last burst selections submission from each orbit.
-    
+
     Burst selections can be submitted multiple times but only
     the latest file serves as the official selections file.
-    
+
     For the SITL, the SITL makes selections within the SITL
     window. If data is downlinked after the SITL window closes,
     selections on that data are submitted separately into the
     back structure and should be appended to the last submission
     that took place within the SITL window.
-    
+
     Parameters
     ----------
     data : list of BurstSegments
@@ -311,7 +311,7 @@ def _latest_segments(data, orbit_start, orbit_stop, sitl=False):
         If true, the burst selections were made by the SITL and
         there are back structure submissions to take into
         consideration
-    
+
     Returns
     -------
     results : list of BurstSegments
@@ -325,12 +325,12 @@ def _latest_segments(data, orbit_start, orbit_stop, sitl=False):
         sroi = sdc.mission_events('sroi', orbit, orbit)
         tstart = min(sroi['tstart'])
         tend = max(sroi['tend'])
-        
+
         # Need to know when the SITL window closes in order to
         # keep submissions to the back structure.
         if sitl:
             sitl_window = sdc.mission_events('sitl_window', orbit, orbit)
-        
+
         # Find the burst segments that were selected within the
         # current SROI
         create_time = None
@@ -342,14 +342,14 @@ def _latest_segments(data, orbit_start, orbit_stop, sitl=False):
                 continue
             if segment.tstart > tend:
                 break
-            
+
             # Initialize with the first segment within the orbit.
             # Create times are the same for all selections within
             # a single submission. There may be several submissions
             # per orbit.
             if create_time is None:
                 create_time = segment.createtime
-            
+
             # Keep segments from the same submission (create time).
             # If there is a new submission within the orbit, take
             # selections from the new submission and discard those
@@ -372,12 +372,12 @@ def _latest_segments(data, orbit_start, orbit_stop, sitl=False):
                     orbit_segments = [segment]
             else:
                 continue
-        
+
         # Truncate the segments and append this orbit's submissions
         # to the overall results.
         data = data[idx:]
         result.extend(orbit_segments)
-    
+
     return result
 
 
@@ -385,12 +385,12 @@ def _mission_events_to_burst_segment(data):
     '''
     Turn selections created by `MrMMS_SDC_API.mission_events` and turn
     them into `BurstSegment` instances.
-    
+
     Parameters
     ----------
     data : dict
         Data associated with each burst segment
-    
+
     Returns
     -------
     result : list of `BurstSegment`
@@ -403,12 +403,12 @@ def _sitl_selections_to_burst_segment(data):
     '''
     Turn selections created by `MrMMS_SDC_API.sitl_selections` and turn
     them into `BurstSegment` instances.
-    
+
     Parameters
     ----------
     data : dict
         Data associated with each burst segment
-    
+
     Returns
     -------
     result : list of `BurstSegment`
@@ -416,7 +416,7 @@ def _sitl_selections_to_burst_segment(data):
     '''
     result = []
     for idx in range(len(data['fom'])):
-        result.append(BurstSegment(data['tstart'][idx], data['tstop'][idx], 
+        result.append(BurstSegment(data['tstart'][idx], data['tstop'][idx],
                                    data['fom'][idx], data['discussion'][idx],
                                    sourceid=data['sourceid'][idx],
                                    createtime=data['createtime'][idx],
@@ -488,7 +488,7 @@ def plot_metric(ref_data, test_data, fig, labels, location,
                 nbins=10):
     '''
     Visualize the overlap between segments.
-    
+
     Parameters
     ----------
     ref_data : list of `BurstSegment`s
@@ -502,7 +502,7 @@ def plot_metric(ref_data, test_data, fig, labels, location,
         Location of the figure (row, col, nrows, ncols)
     nbins : int
         Number of histogram bins to create
-    
+
     Returns:
     --------
     ax : `matplotlib.pyplot.Axes`
@@ -511,14 +511,14 @@ def plot_metric(ref_data, test_data, fig, labels, location,
         Reference data that falls within the [start, stop] times
         of the test data.
     '''
-    
+
     # Determine by how much the test data overlaps with
     # the reference data.
     ref_test = []
     ref_test_data = []
     ref_test = [selection_overlap(segment, test_data)
                 for segment in ref_data]
-    
+
     # Overlap statistics
     #   - Number of segments selected
     #   - Percentage of segments selected
@@ -527,10 +527,10 @@ def plot_metric(ref_data, test_data, fig, labels, location,
                             for selection in ref_test)
     ref_test_pct_selected = ref_test_selected / len(ref_test) * 100.0
     ref_test_pct_overlap = [selection['pct_overlap'] for selection in ref_test]
-    
+
     # Calculate the plot index from the (row,col) subplot location
     plot_idx = lambda rowcol, ncols : (rowcol[0]-1)*ncols + rowcol[1]
-    
+
     # Create a figure
     ax = fig.add_subplot(location[2], location[3],
                          plot_idx(location[0:2], location[3]))
@@ -545,7 +545,7 @@ def plot_metric(ref_data, test_data, fig, labels, location,
               verticalalignment='top', horizontalalignment='center',
               transform=ax.transAxes)
     ax.set_title('{0} Segments\nSelected by {1}'.format(*labels))
-    
+
     return ax, ref_test
 
 
@@ -553,7 +553,7 @@ def metric(sroi=None, output_dir=None, figtype=None):
     do_sroi=False
     if sroi in (1, 2, 3):
         do_sroi=True
-    
+
     if output_dir is None:
         output_dir = pathlib.Path('~/').expanduser()
     else:
@@ -566,31 +566,31 @@ def metric(sroi=None, output_dir=None, figtype=None):
     start_date = dt.datetime(2019, 10, 19)
     #end_date = start_date + dt.timedelta(days=5)
     end_date = dt.datetime.now()
-    
+
     abs_data = selections('abs', start_date, end_date,
                           latest=True, combine=True, metadata=do_sroi)
-    
+
     gls_data = selections('mp-dl-unh', start_date, end_date,
                           latest=True, combine=True, metadata=do_sroi)
-    
+
     sitl_data = selections('sitl+back', start_date, end_date,
                            latest=True, combine=True, metadata=do_sroi)
-    
+
     # Filter by SROI
     if do_sroi:
         abs_data = [s for s in abs_data if s.sroi == sroi]
         sitl_data = [s for s in sitl_data if s.sroi == sroi]
         gls_data = [s for s in gls_data if s.sroi == sroi]
-    
+
     sitl_mp_data = filter_segments(sitl_data, '(MP|Magnetopause)')
-    
+
     # Create a figure
     nbins = 10
     nrows = 4
     ncols = 3
     fig = plt.figure(figsize=(8.5, 10))
     fig.subplots_adjust(hspace=0.55, wspace=0.3)
-    
+
     # GLS-SITL Comparison
     ax, gls_sitl = plot_metric(gls_data, sitl_data, fig,
                                ('GLS', 'SITL'), (1, 1, nrows, ncols),
@@ -604,7 +604,7 @@ def metric(sroi=None, output_dir=None, figtype=None):
     ax, sitl_mp_gls = plot_metric(sitl_mp_data, gls_data, fig,
                                   ('SITL MP', 'GLS'), (4, 1, nrows, ncols),
                                   nbins=nbins)
-    
+
     # ABS-SITL Comparison
     ax, abs_sitl = plot_metric(abs_data, sitl_data, fig,
                                ('ABS', 'SITL'), (1, 2, nrows, ncols),
@@ -618,12 +618,12 @@ def metric(sroi=None, output_dir=None, figtype=None):
     ax, sitl_mp_abs = plot_metric(sitl_mp_data, abs_data, fig,
                                   ('SITL MP', 'ABS'), (4, 2, nrows, ncols),
                                   nbins=nbins)
-    
+
     # GLS-ABS Comparison
     abs_mp_data = [abs_data[idx]
                    for idx, s in enumerate(abs_sitl_mp)
                    if s['n_selections'] > 0]
-    
+
     ax, gls_abs = plot_metric(gls_data, abs_data, fig,
                               ('GLS', 'ABS'), (1, 3, nrows, ncols),
                               nbins=nbins)
@@ -636,7 +636,7 @@ def metric(sroi=None, output_dir=None, figtype=None):
     ax, abs_mp_gls = plot_metric(abs_mp_data, gls_data, fig,
                                  ('ABS MP', 'GLS'), (4, 3, nrows, ncols),
                                  nbins=nbins)
-    
+
     # Save the figure
     if figtype is not None:
         sroi_str = ''
@@ -649,7 +649,7 @@ def metric(sroi=None, output_dir=None, figtype=None):
                                 )))
         filename = filename.with_suffix('.' + figtype)
         plt.savefig(filename.expanduser())
-    
+
     plt.show()
 
 
@@ -681,8 +681,8 @@ def print_segments(data, full=False):
                                   s.discussion)
                   )
         return
-    
-    
+
+
     print('{0:>19}   {1:>19}   {2}   {3}'
           .format('TSTART', 'TSTOP', 'FOM', 'DISCUSSION')
           )
@@ -697,7 +697,7 @@ def print_segments(data, full=False):
 def read_csv(filename, start_time=None, stop_time=None, header=True):
     '''
     Read a CSV file with burst segment selections.
-    
+
     Parameters
     ----------
     filename : str
@@ -715,7 +715,7 @@ def read_csv(filename, start_time=None, stop_time=None, header=True):
         names of each column. If `header` is `False`, the
         assumed column names are 'start_time', 'stop_time',
         'fom', 'sourceid', 'discussion', 'createtime'.
-    
+
     Returns
     -------
     data : list of `BurstSegment`
@@ -726,18 +726,18 @@ def read_csv(filename, start_time=None, stop_time=None, header=True):
         start_time = dt.datetime.strptime(start_time, '%Y-%m-%d %H:%M:%S')
     if isinstance(stop_time, str):
         stop_time = dt.datetime.strptime(stop_time, '%Y-%m-%d %H:%M:%S')
-    
+
     file = pathlib.Path(filename)
     data = []
-            
+
     # Read the file
     with open(file.expanduser(), 'r', newline='') as csvfile:
         csvreader = csv.reader(csvfile)
-        
+
         # Take column names from file header
         if header:
             keys = next(csvreader)
-            
+
         # Read the rows
         for row in csvreader:
             # Select the data within the time interval
@@ -751,14 +751,14 @@ def read_csv(filename, start_time=None, stop_time=None, header=True):
                                              '%Y-%m-%d %H:%M:%S')
                 if tstop > stop_time:
                     continue  # BREAK if sorted!!
-            
+
             # Initialize segment with required fields then add
             # additional fields after
             data.append(BurstSegment(row[0], row[1], float(row[2]), row[4],
                                      sourceid=row[3], createtime=row[5]
                                      )
                         )
-    
+
     return data
 
 
@@ -775,7 +775,7 @@ def remove_duplicate_segments(data):
     data : list of `BurstSegment`
         Selections from which to prude duplicates. Segments
         must be sorted by `tstart`.
-    
+
     Returns
     -------
     results : list of `BurstSegments`
@@ -785,16 +785,16 @@ def remove_duplicate_segments(data):
     overwrite_times = set()
     for idx, segment in enumerate(data):
         iahead = idx + 1
-        
+
         # Segments should already be sorted. Future segments
         # overlap with current segment if the future segement
         # start time is closer to the current segment start
         # time than is the current segment's end time.
-        while ((iahead < len(data)) and 
+        while ((iahead < len(data)) and
                ((data[iahead].tstart - segment.tstart) <
                 (segment.tstop - segment.tstart))
                ):
-            
+
             # Remove the segment with the earlier create time
             if segment.createtime < data[iahead].createtime:
                 remove_segment = segment
@@ -802,7 +802,7 @@ def remove_duplicate_segments(data):
             else:
                 remove_segment = data[iahead]
                 overwrite_time = data[iahead].createtime
-            
+
             # The segment may have already been removed if
             # there are more than one other segments that
             # overlap with it.
@@ -811,9 +811,9 @@ def remove_duplicate_segments(data):
                 overwrite_times.add(overwrite_time)
             except ValueError:
                 pass
-            
+
             iahead += 1
-    
+
     # Remove all segments with create times in the overwrite set
     # Note that the model results do not appear to be reproducible
     # so that every time the model is run, a different set of
@@ -824,7 +824,7 @@ def remove_duplicate_segments(data):
 #                for segment in results
 #                if segment.createtime not in overwrite_times
 #                ]
-    
+
     print('# Segments Removed: {}'.format(len(data) - len(results)))
     return results
 
@@ -844,7 +844,7 @@ def remove_duplicate_segments_v1(data):
         t0_ref = ref_seg.taistarttime
         t1_ref = ref_seg.taiendtime
         dt_ref = t1_ref - t0_ref
-        
+
         if idx == len(data) - 2:
             import pdb
             pdb.set_trace()
@@ -873,6 +873,22 @@ def remove_duplicate_segments_v1(data):
 
 
 def selection_overlap(ref, tests):
+    '''
+    Gather overlap statistics.
+    
+    Parameters
+    ----------
+    ref : `selections.BurstSegment`
+        The reference burst segment.
+    tests : list of `selections.BurstSegment`
+        The burst segements against which the reference segment is compared.
+    
+    Returns
+    -------
+    out : dict
+        Data regarding how much the reference segment overlaps with the
+        test segments.
+    '''
     out = {'dt': ref.tstop - ref.tstart,
            'dt_next': dt.timedelta(days=7000),
            'n_selections': 0,
@@ -914,7 +930,7 @@ def selections(type, start, stop,
                metadata=False, filter=None):
     '''
     Factory function for burst data selections.
-    
+
     Parameters
     ----------
     type : str
@@ -938,7 +954,7 @@ def selections(type, start, stop,
     filter : str
         Filter the burst segments by applying the regular expression to
         the segment's discussions string.
-    
+
     Returns
     -------
     results : list of `BurstSegment`
@@ -961,7 +977,7 @@ def sort_segments(data, createtime=False):
         'fom', 'discussion', 'tstart', and 'tstop'.
     createtime: bool
         Sort by time created instead of by selection start time.
-    
+
     Returns
     -------
     results : list of `BurstSegement`
@@ -987,18 +1003,18 @@ def write_csv(filename, data, append=False):
     '''
     header = ('start_time', 'stop_time', 'fom', 'sourceid',
               'discussion', 'createtime')
-    
+
     mode = 'w'
     if append:
         mode = 'a'
-    
+
     file = pathlib.Path(filename)
     with open(file.expanduser(), mode, newline='') as csvfile:
         csvwriter = csv.writer(csvfile)
-        
+
         if not append:
             csvwriter.writerow(header)
-        
+
         for segment in data:
             csvwriter.writerow([segment.start_time,
                                 segment.stop_time,
