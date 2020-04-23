@@ -1843,7 +1843,7 @@ def filename2path(fname, root=''):
         Path to the data file.
     """
 
-    parts = parse_filename(fname)
+    parts = parse_file_name(fname)
 
     # data_type = '*_selections'
     if 'selections' in parts[0]:
@@ -1853,12 +1853,12 @@ def filename2path(fname, root=''):
     else:
         # Create the directory structure
         #   sc/instr/mode/level[/optdesc]/YYYY/MM/
-        path = os.path.join(root, *part[0:5], part[5][0:4], part[5][4:6])
+        path = os.path.join(root, *parts[0:5], parts[5][0:4], parts[5][4:6])
 
         # Burst files require the DAY directory
         #   sc/instr/mode/level[/optdesc]/YYYY/MM/DD/
-        if part[3] == 'brst':
-            path = os.path.join(path, part[5][6:8])
+        if parts[2] == 'brst':
+            path = os.path.join(path, parts[5][6:8])
 
     path = os.path.join(path, fname)
 
@@ -1971,25 +1971,29 @@ def filter_version(files, latest=None, version=None, min_version=None):
 
     # Output list
     filtered_files = []
+    
+    # Extract the version
+    parts = [parse_file_name(file) for file in files]
+    versions = [part[-1] for part in parts]
 
     # The latest version of each file type
     if latest:
         # Parse file names and identify unique file types
         #   - File types include all parts of file name except version number
-        parts = mms_parse_filename(files)
         bases = ['_'.join(part[0:-2]) for part in parts]
-        versions = [part[-1] for part in parts]
         uniq_bases = list(set(bases))
 
         # Filter according to unique file type
         for idx, uniq_base in enumerate(uniq_bases):
-            test_idx = [i for i, test_base in bases if test_base == uniq_base]
+            test_idx = [i
+                        for i, test_base in enumerate(bases)
+                        if test_base == uniq_base]
             file_ref = files[idx]
-            vXYZ_ref = versions[idx].split('.')
+            vXYZ_ref = [int(v) for v in versions[idx].split('.')]
 
             filtered_files.append(file_ref)
             for i in test_idx:
-                vXYZ = versions[i].split('.')
+                vXYZ = [int(v) for v in versions[i].split('.')]
                 if ((vXYZ[0] > vXYZ_ref[0]) or
                         (vXYZ[0] == vXYZ_ref[0] and
                          vXYZ[1] > vXYZ_ref[1]) or
@@ -2000,22 +2004,22 @@ def filter_version(files, latest=None, version=None, min_version=None):
 
     # All files with version number greater or equal to MIN_VERSION
     elif min_version is not None:
-        vXYZ_min = min_version.split('.')
+        vXYZ_min = [int(v) for v in min_version.split('.')]
         for idx, v in enumerate(versions):
-            vXYZ = v.split('.')
+            vXYZ = [int(vstr) for vstr in v.split('.')]
             if ((vXYZ[0] > vXYZ_min[0]) or
-                    (vXYZ[0] == vXYZ_min[0] and
-                     vXYZ[1] > vXYZ_min[1]) or
-                    (vXYZ[0] == vXYZ_min[0] and
-                     vXYZ[1] == vXYZ_min[1] and
-                     vXYZ[2] >= vXYZ_min[2])):
+                    ((vXYZ[0] == vXYZ_min[0]) and
+                     (vXYZ[1] > vXYZ_min[1])) or
+                    ((vXYZ[0] == vXYZ_min[0]) and
+                     (vXYZ[1] == vXYZ_min[1]) and
+                     (vXYZ[2] >= vXYZ_min[2]))):
                 filtered_files.append(files[idx])
 
     # All files with a particular version number
     elif version is not None:
-        vXYZ_ref = min_version.split('.')
+        vXYZ_ref = [int(v) for v in version.split('.')]
         for idx, v in enumerate(versions):
-            vXYZ = v.split('.')
+            vXYZ = [int(vstr) for vstr in v.split('.')]
             if (vXYZ[0] == vXYZ_ref[0] and
                     vXYZ[1] == vXYZ_ref[1] and
                     vXYZ[2] == vXYZ_ref[2]):
@@ -2451,11 +2455,11 @@ def parse_time(times):
     #    selections  YYYY-MM-DD-hh-mm-ss
     parts = [None]*len(times)
     for idx, time in enumerate(times):
-        if len(time) == 21:
+        if len(time) == 19:
             parts[idx] = (time[0:4], time[5:7], time[8:10],
                           time[11:13], time[14:16], time[17:]
                           )
-        elif len(time) == 16:
+        elif len(time) == 14:
             parts[idx] = (time[0:4], time[4:6], time[6:8],
                           time[8:10], time[10:12], time[12:14]
                           )
