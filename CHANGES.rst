@@ -9,6 +9,9 @@ The format is based on `Keep a Changelog`_, and this project adheres to `Semanti
 
 [Unreleased]
 ------------
+
+v0.2.1 (2020-04-24)
+------------
 Added
 ^^^^^
 - `util.tai.py` for converting to/from TAI times.
