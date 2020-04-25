@@ -121,12 +121,16 @@ class MrMMS_SDC_API:
 
         elif name == 'files':
             if value is not None:
+                # Keep track of site because setting
+                # self.level = None will set self.site = 'public'
+                site = self.site
                 self.sc = None
                 self.instr = None
                 self.mode = None
                 self.level = None
                 self.optdesc = None
                 self.version = None
+                self.site = site
 
         elif name == 'level':
             # L2 and L3 are the only public data levels
@@ -312,7 +316,6 @@ class MrMMS_SDC_API:
         #     is so that it can be restored
         #   - Setting FILES will indirectly cause SITE='public'.
         #     Keep track of SITE.
-        site = self.site
         state = {}
         state['sc'] = self.sc
         state['instr'] = self.instr
@@ -323,7 +326,6 @@ class MrMMS_SDC_API:
         state['files'] = self.files
 
         # Get file name and size
-        self.site = site
         self.files = file_names
         file_info = self.file_info()
 

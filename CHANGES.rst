@@ -21,6 +21,7 @@ Fixed
 - Convert version numbers to ints in `mrmms_sdc_api.filter_version` to prevent character-by-character comparison (e.g. '53' vs '110').
 - Typos in `mrmms_sdc_api.parse_file_name`
 - Checked time strings for length incorrectly in `mrmms_sdc_api.parse_time`
+- Setting the `files` attribute automatically set `site='public` even for files not on the public site in `mrmms_sdc_api.MrMMS_SDC_API.__getattr__`
 
 v0.2.0 (2020-04-09)
 --------------------
