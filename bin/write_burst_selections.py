@@ -1,7 +1,7 @@
 import csv
 import pathlib
 import datetime as dt
-from pymms.pymms import selections as sel
+from pymms.sdc import selections as sel
 
 # NOTES:
 #  - sdc.sitl_selections filters files the same way that the science files
@@ -31,18 +31,18 @@ def get_start_time(filename):
         End time of the last burst segment. Used to search ahead for
         new data.
     '''
-    # Read the last line of the file
-    with open(filename, 'r', newline='') as csvfile:
-        csvreader = csv.reader(csvfile)
-        for row in csvreader:
-            stop_time = row[1]
+    data = sel.read_csv(filename)
+    last_create_time = dt.datetime.strptime(data[-1].createtime, '%Y-%m-%d %H:%M:%S')
+    data = [segment
+            for segment in data
+            if (dt.datetime.strptime(segment.createtime, '%Y-%m-%d %H:%M:%S')
+                < last_create_time)
+            ]
+    
+    return data
 
-    # Use the latest burst segment as the start time and the
-    # current time as the end time
-    return dt.datetime.strptime(stop_time, '%Y-%m-%d %H:%M:%S')
 
-
-def burst_selections(file, type, tstart=None, **kwargs):
+def burst_selections(file, type, tstart=None, tstop=None, **kwargs):
     '''
     Retrieve burst selections and write them to a file.
     
@@ -65,22 +65,27 @@ def burst_selections(file, type, tstart=None, **kwargs):
         Any keyword accepted by `pymms.selections.selections`
     '''
     file = pathlib.Path(file)
+    old_data = []
+    if not file.parent.exists():
+        file.parent.mkdir()
+    if file.exists():
+        old_data = get_start_time(file)
+        tstart = old_data[-1].tstop
+    if tstop is None:
+        tstop = dt.datetime.now()
     
     # Get the data interval. If the file exists, start from
     # the last time in the file. Go through the current time.
-    tstop = dt.datetime.now()
-    if file.exists():
-        tstart = get_start_time(file)
     
     # Read the data
-    data = sel.selections(type, tstart, tstop, **kwargs)
+    new_data = sel.selections(type, tstart, tstop, **kwargs)
     i = 0
-    while data[i].tstart < tstart:
+    while new_data[i].tstart < tstart:
         i += 1
-    data = data[i:]
+    old_data.extend(new_data[i:])
     
     # Write the data
-    sel.write_csv(file, data, append=file.exists())
+    sel.write_csv(file, old_data)
 
 
 if __name__ == '__main__':

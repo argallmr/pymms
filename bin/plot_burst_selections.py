@@ -1,7 +1,7 @@
 import datetime as dt
-from pymms.pymms import mrmms_sdc_api as sdc
-from pymms.pymms import selections as sel
-from pyarray.metaarray import metabase, metaarray, metatime
+from pymms.sdc import mrmms_sdc_api as sdc
+from pymms.sdc import selections as sel
+from metaarray import metabase, metaarray, metatime
 from matplotlib import pyplot as plt
 import pathlib
 
@@ -79,9 +79,6 @@ def get_sroi(start, sc='mms1'):
 def plot_selections_in_sroi(sc, tstart,
                             tstop=dt.datetime.now(), outdir=None):
     
-    if tstop is None:
-        tstop = dt.datetime.now()
-    
     # Get orbit range
     start_orbit = time_to_orbit(tstart)
     stop_orbit = time_to_orbit(tstop)
@@ -117,7 +114,7 @@ def download_ql_data(t0, t1):
     t1 = dt.datetime(2020, 1, 17, 21, 0)
 
     t0 = dt.datetime(2019, 12, 16, 18, 0, 0)
-    t1 = dt.datetime(2019, 12, 17, 08, 0, 0)
+    t1 = dt.datetime(2019, 12, 17, 8, 0, 0)
 
     start_date = dt.datetime.combine(t0.date(), dt.time(0, 0, 0))
     end_date = dt.datetime.combine(t1.date() + dt.timedelta(days=1), dt.time(0, 0, 0))

@@ -256,8 +256,11 @@ def _get_segment_data(data, orbit_start, orbit_stop, sc='mms1'):
             segment.sroi_tstart = sroi_data[1]
             segment.sroi_tstop = sroi_data[2]
 
-            segment.sitl_window_tstart = window['tstart']
-            segment.sitl_window_tstop = window['tend']
+            # The SITL Window is not defined as of orbit 1098, when
+            # a SITL-defined window was implemented
+            if iorbit < 1098:
+                segment.sitl_window_tstart = window['tstart']
+                segment.sitl_window_tstop = window['tend']
 
             idx += 1
 
@@ -322,9 +325,28 @@ def _latest_segments(data, orbit_start, orbit_stop, sitl=False):
         # The start and end times of the sub-regions of interest.
         # These are the times in which selections can be made for
         # any given orbit.
-        sroi = sdc.mission_events('sroi', orbit, orbit)
+        
+        # SROI information is not available before orbit 239.
+        # The first SROI is defined on 2015-11-06, which is only a
+        # couple of months after formal science data collection began
+        # on 2015-09-01.
+        
+        # However, similar information is available starting at 
+        # 2015-08-10 (orbit 151) in the science_roi event type. It's
+        # nearly equivalent because there was only a single SROI per
+        # orbit during the earlier mission phases, but science_roi is
+        # the span across all spacecraft.
+        if orbit < 239:
+            sroi = sdc.mission_events('science_roi', orbit, orbit)
+        else:
+            sroi = sdc.mission_events('sroi', orbit, orbit)
         tstart = min(sroi['tstart'])
         tend = max(sroi['tend'])
+
+        # The SITL Window is not defined as of orbit 1098, when
+        # a SITL-defined window was implemented
+        if orbit >= 1098:
+            sitl = False
 
         # Need to know when the SITL window closes in order to
         # keep submissions to the back structure.
@@ -481,7 +503,9 @@ def filter_segments(data, filter):
     data : dict
         Selections to be combined. Must have key 'discussion'.
     '''
-    return [seg for seg in data if re.search(filter, seg.discussion)]
+    return [seg
+            for seg in data
+            if re.search(filter, seg.discussion, re.IGNORECASE)]
 
 
 def plot_metric(ref_data, test_data, fig, labels, location,
@@ -946,6 +970,12 @@ def selections(type, start, stop,
         Combine adjacent selection into one selection. Due to downlink
         limitations, long time duration burst segments must be broken into
         smaller chunks.
+    latest : bool
+        For each SROI, keep only those times with the most recent time
+        of creation. Cannot be used with `unique`.
+    metadata : bool
+        Retrieve the orbit number and time interval, SROI number and time
+        interval, and SITL window time interval.
     unique : bool
         Return only unique segments. See `sort`. Also, a SITL may adjust
         the time interval of their selections, so different submissions will

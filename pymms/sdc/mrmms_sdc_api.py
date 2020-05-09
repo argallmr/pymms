@@ -1273,7 +1273,8 @@ def _read_fom_structures(files):
     for file in files:
         data = read_eva_fom_structure(file)
         if data['valid'] == 0:
-            raise ValueError('Invalid fom structure. Investigate!')
+            print('Skipping invalid file {0}'.format(file))
+            continue
         
         # Turn scalars into lists so they can be accumulated
         # across multiple files.
@@ -1286,7 +1287,8 @@ def _read_fom_structures(files):
             result = {key:
                       (value
                        if isinstance(value, list)
-                       else [value])
+                       else [value]
+                       )
                       for key, value in data.items()
                       }
             result['file'] = [file] * len(data['fom'])
@@ -2527,7 +2529,16 @@ def read_eva_fom_structure(sav_filename):
 
     assert 'fomstr' in sav, 'save file does not have a fomstr structure'
     fomstr = sav['fomstr']
-
+    
+    # Handle invalid structures
+    #   - example: abs_selections_2017-10-29-09-25-34.sav
+    if fomstr.valid[0] == 0:
+        d = {'valid': int(fomstr.valid[0]),
+             'error': fomstr.error[0].decode('utf-8'),
+             'errno': int(fomstr.errno[0])
+            }
+        return d
+    
     d = {'valid': int(fomstr.valid[0]),
          'error': fomstr.error[0],
          'algversion': fomstr.algversion[0].decode('utf-8'),
