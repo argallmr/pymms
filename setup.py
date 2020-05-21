@@ -51,5 +51,10 @@ setup(
                           "cdflib",
                           "matplotlib>=3.1.1"
                           ],
-      python_requires = '>=3.6'
+      python_requires = '>=3.6',
+      entry_points={
+          'console_scripts': [
+              'mp-dl-unh-data = pymms.sdc.mp_dl_unh_data:download_from_cmd'
+          ]
+      }
       )
