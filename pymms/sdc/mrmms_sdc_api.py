@@ -248,7 +248,7 @@ class MrMMS_SDC_API:
                     break
                 else:
                     print('Incorrect username or password. %d tries '
-                          'remaining.' % maxAttempts-nAttemps)
+                          'remaining.' % maxAttempts-nAttempts)
                     nAttempts += 1
 
             # Failed log-in

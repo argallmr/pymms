@@ -113,15 +113,18 @@ def _burst_data_segments_to_burst_segment(data):
     '''
     # Look at createtime and finishtime keys to see if either can
     # substitute for a file name time stamp
+    
     result = []
-    for tstart, tend, fom, discussion, sourceid, createtime in \
+    for tstart, tend, fom, discussion, sourceid, createtime, status in \
         zip(data['tstart'], data['tstop'], data['fom'],
-            data['discussion'], data['sourceid'], data['createtime']
+            data['discussion'], data['sourceid'], data['createtime'],
+            data['status']
             ):
-        result.append(BurstSegment(tstart, tend, fom, discussion,
-                                   sourceid=sourceid,
-                                   createtime=createtime)
-                      )
+        segment = BurstSegment(tstart, tend, fom, discussion,
+                               sourceid=sourceid,
+                               createtime=createtime)
+        segment .status = status
+        result.append(segment)
     return result
 
 
@@ -691,17 +694,23 @@ def print_segments(data, full=False):
         source_len = max(len(s.sourceid) for s in data)
         source_len = max(source_len, 8)
         header_fmt = '{0:>19}   {1:>19}   {2:>19}   {3:>5}   ' \
-                     '{4:>'+str(source_len)+'}   {5}'
+                     '{4:>19}   {5:>'+str(source_len)+'}   {6}'
         data_fmt = '{0:>19}   {1:>19}   {2:>19}   {3:5.1f}   ' \
-                    '{4:>'+str(source_len)+'}   {5}'
+                   '{4:>19}, {5:>'+str(source_len)+'}   {6}'
         print(header_fmt.format('TSTART', 'TSTOP', 'CREATETIME',
-                                'FOM', 'SOURCEID', 'DISCUSSION')
+                                'FOM', 'STATUS', 'SOURCEID', 'DISCUSSION'
+                                )
               )
         for s in data:
+            try:
+                status = s.status
+            except AttributeError:
+                status = ''
+            
             createtime = dt.datetime.strftime(s.createtime,
                                               '%Y-%m-%d %H:%M:%S')
             print(data_fmt.format(s.start_time, s.stop_time,
-                                  createtime, s.fom, s.sourceid,
+                                  createtime, s.fom, status, s.sourceid,
                                   s.discussion)
                   )
         return

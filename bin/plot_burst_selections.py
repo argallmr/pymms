@@ -1,4 +1,5 @@
 import datetime as dt
+import pymms
 from pymms.sdc import mrmms_sdc_api as sdc
 from pymms.sdc import selections as sel
 from metaarray import metabase, metaarray, metatime
@@ -84,6 +85,8 @@ def plot_selections_in_sroi(sc, tstart,
     stop_orbit = time_to_orbit(tstop)
     
     outdir = pathlib.Path(outdir)
+    if not outdir.exists():
+        outdir.mkdir()
     fname_fmt = 'burst_selections_orbit-{0}_sroi-{1}.png'
 
     # Step through each orbit
@@ -194,11 +197,20 @@ def plot_burst_selections(sc, start_date, end_date,
 #                                    start_date=start_date, end_date=end_date)
 
     # Read the files
-    abs_data = sel.read_csv('/Users/argall/Desktop/abs_test.csv',
+    abs_data = sel.read_csv((pathlib.Path(pymms.config['dropbox_root'])
+                             / 'selections'
+                             / 'abs_selections_all_20150901_000000.csv'
+                             ),
                             start_time=start_date, stop_time=end_date)
-    sitl_data = sel.read_csv('/Users/argall/Desktop/sitl_test.csv',
+    sitl_data = sel.read_csv((pathlib.Path(pymms.config['dropbox_root'])
+                             / 'selections'
+                             / 'sitl_selections_all_20150901_000000.csv'
+                             ),
                              start_time=start_date, stop_time=end_date)
-    gls_data = sel.read_csv('/Users/argall/Desktop/gls_test.csv',
+    gls_data = sel.read_csv((pathlib.Path(pymms.config['dropbox_root'])
+                             / 'selections'
+                             / 'gls_selections_all_20191016_000000.csv'
+                             ),
                             start_time=start_date, stop_time=end_date)
 
     # SITL data time series
