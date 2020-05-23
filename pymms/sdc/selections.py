@@ -475,7 +475,7 @@ def combine_segments(data, delta_t=0):
     #   - Use itertools.islice to select start index without copying array
     for idx, t_delta in enumerate(t_deltas):
         # Contiguous segments are separated by delta_t seconds
-        if t_delta == delta_t:
+        if t_delta <= delta_t:
             # And unique segments have the same fom and discussion
             if (data[icontig].fom == data[idx+1].fom) and \
                     (data[icontig].discussion == data[idx+1].discussion):
