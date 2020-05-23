@@ -9,6 +9,9 @@ The format is based on `Keep a Changelog`_, and this project adheres to `Semanti
 
 [Unreleased]
 ------------
+
+v0.2.2 (2020-05-22)
+------------
 Added
 ^^^^^
 * Downlink status is now an attribute of SITL burst segments
