@@ -70,4 +70,8 @@ def load_config():
         if config_dict[cred] == 'None':
             config_dict[cred] = None
 
+    config_dict['model_directory'] = config['GLS']['model_directory']
+    if config_dict['model_directory'] == 'None':
+        config_dict['model_directory'] = None
+
     return config_dict

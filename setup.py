@@ -41,7 +41,8 @@ setup(
       packages = ["pymms",
                   "pymms.sdc",
                   "pymms.util",
-                  "pymms.sql"],
+                  "pymms.sql",
+                  "pymms.gls"],
       package_data = {'pymms': ['config_template.ini']},
       include_package_data = True,
       install_requires = ["numpy>=1.8",
@@ -49,7 +50,15 @@ setup(
                           "scipy>=1.4.1", 
                           "tqdm>=4.36.1",
                           "cdflib",
-                          "matplotlib>=3.1.1"
+                          "matplotlib>=3.1.1",
+                          "tensorflow >=1.13.1, <=1.15",
+                          "keras >=2.2.4, <=2.3.1"
                           ],
-      python_requires = '>=3.6'
+      python_requires = '>=3.6',
+      entry_points={
+          'console_scripts': [
+              'gls-mp-data = pymms.gls.gls_mp_data:download_from_cmd',
+              'gls-mp = pymms.gls.gls_mp:main'
+          ]
+      }
       )
