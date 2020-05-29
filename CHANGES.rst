@@ -21,9 +21,13 @@ Changed
 * SROI not available before orbit 239- use science_roi
 * sitl_window not available after orbit 1097
 
+Backwards Incompatible
+^^^^^^^^^^^^^^^^^^^^^^
+* Ignore case when filtering burst segments
+
 Fixed
 ^^^^^
-* Fix typo preventing log-in if credentials not provided initially
+* Typo preventing log-in if credentials not provided initially
 
 v0.2.1 (2020-04-24)
 ------------

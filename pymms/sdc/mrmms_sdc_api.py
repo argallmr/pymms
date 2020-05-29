@@ -968,6 +968,48 @@ def _datetime_to_list(datetime):
             ]
 
 
+def datetime_to_tai(t_datetime):
+    # Convert datetime to TAI
+    #   - TAI timestaps are TAI seconds elapsed since 1958-01-01
+    return tt2000_to_tai(datetime_to_tt2000(t_datetime))
+
+
+def datetime_to_tt2000(t_datetime):
+    # Convert datetime to TT2000
+    #   - TT2000 are TAI nanoseconds elapsed since 2000-01-01
+    t_list = _datetime_to_list(t_datetime)
+    return epochs.CDFepoch.compute_tt2000(t_list)
+
+
+def tai_to_tt2000(t_tai):
+    # Convert TAI to TT2000
+    #   - TAI timestaps are TAI seconds elapsed since 1958-01-01
+    #   - TT2000 are TAI nanoseconds elapsed since 2000-01-01
+    t_1958 = epochs.CDFepoch.compute_tt2000([1958, 1, 1, 0, 0, 0, 0, 0, 0])
+    return np.asarray(t_tai) * int(1e9) + t_1958
+
+
+def tai_to_datetime(t_tai):
+    # Convert TAI to datetime
+    #   - TAI timestaps are TAI seconds elapsed since 1958-01-01
+    return tt2000_to_datetime(tai_to_tt2000(t_tai))
+
+
+def tt2000_to_tai(t_tt2000):
+    # Convert TT2000 to TAI
+    #   - TAI timestaps are TAI seconds elapsed since 1958-01-01
+    #   - TT2000 are TAI nanoseconds elapsed since 2000-01-01
+    t_1958 = epochs.CDFepoch.compute_tt2000([1958, 1, 1, 0, 0, 0, 0, 0, 0])
+    return (t_tt2000 - t_1958) // int(1e9)
+
+
+def tt2000_to_datetime(t_tt2000):
+    # Convert datetime to TT2000
+    #   - TT2000 are TAI nanoseconds elapsed since 2000-01-01
+    tepoch = epochs.CDFepoch()
+    return tepoch.to_datetime(t_tt2000)
+
+
 def _response_text_to_dict(text):
     # Read first line as dict keys. Cut text from TAI keys
     f = io.StringIO(text)
@@ -2095,7 +2137,7 @@ def _get_apogee(start, stop, sc):
     with spacecraft `sc`.
     '''
     return _mission_data(start, stop, sc=sc,
-                          source='Timeline', event_type='apogee')
+                         source='Timeline', event_type='apogee')
 
 def _get_dsn_contact(start, stop, sc):
     '''
@@ -2104,7 +2146,7 @@ def _get_dsn_contact(start, stop, sc):
     fast survey and burst data can be available each orbit.
     '''
     return _mission_data(start, stop, sc=sc,
-                          source='Timeline', event_type='dsn_contact')
+                         source='Timeline', event_type='dsn_contact')
 
 def _get_orbit(start, stop, sc):
     '''
@@ -2112,7 +2154,7 @@ def _get_orbit(start, stop, sc):
     with spacecraft `sc`.
     '''
     return _mission_data(start, stop, sc=sc,
-                          source='Timeline', event_type='orbit')
+                         source='Timeline', event_type='orbit')
 
 def _get_perigee(start, stop, sc):
     '''
@@ -2120,7 +2162,7 @@ def _get_perigee(start, stop, sc):
     with spacecraft `sc`.
     '''
     return _mission_data(start, stop, sc=sc,
-                          source='Timeline', event_type='perigee')
+                         source='Timeline', event_type='perigee')
 
 def _get_science_roi(start, stop, sc):
     '''
@@ -2129,7 +2171,7 @@ def _get_science_roi(start, stop, sc):
     fast survey and burst data can be available each orbit.
     '''
     return _mission_data(start, stop, sc=sc,
-                          source='BDM', event_type='science_roi')
+                         source='BDM', event_type='science_roi')
 
 def _get_shadow(start, stop, sc):
     '''
@@ -2137,7 +2179,7 @@ def _get_shadow(start, stop, sc):
     with spacecraft `sc`.
     '''
     return _mission_data(start, stop, sc=sc,
-                          source='POC', event_type='shadow')
+                         source='POC', event_type='shadow')
 
 def _get_sroi(start, stop, sc):
     '''
@@ -2146,7 +2188,7 @@ def _get_sroi(start, stop, sc):
     SROIs per science_roi.
     '''
     return _mission_data(start, stop, sc=sc,
-                          source='POC', event_type='SROI')
+                         source='POC', event_type='SROI')
 
 def _get_sitl_window(start, stop, sc):
     '''
@@ -2154,7 +2196,7 @@ def _get_sitl_window(start, stop, sc):
     with spacecraft `sc`. Defines when the SITL can submit selections.
     '''
     return _mission_data(start, stop, sc=sc,
-                          source='BDM', event_type='sitl_window')
+                         source='BDM', event_type='sitl_window')
 
 
 def _mission_data(start, stop, sc=None,
