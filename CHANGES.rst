@@ -9,6 +9,11 @@ The format is based on `Keep a Changelog`_, and this project adheres to `Semanti
 
 [Unreleased]
 ------------
+Added
+^^^^^
+* Time conversions between datetime, TAI, and TT2000
+* Support for GLS models
+
 
 v0.2.2 (2020-05-22)
 ------------
