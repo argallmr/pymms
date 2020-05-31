@@ -497,7 +497,7 @@ def combine_segments(data, delta_t=0):
     del data[icontig:]
 
 
-def filter_segments(data, filter):
+def filter_segments(data, filter, case_sensitive=False):
     '''
     Filter burst selections by their discussion string.
 
@@ -505,10 +505,19 @@ def filter_segments(data, filter):
     ----------
     data : dict
         Selections to be combined. Must have key 'discussion'.
+    filter : str
+        Regular expression used to filter the data
+    case_sensitive : bool
+        Make the filter case sensitive
     '''
+    # Make case-insensitive searches the default
+    flags = re.IGNORECASE
+    if case_sensitive:
+        flags = 0
+    
     return [seg
             for seg in data
-            if re.search(filter, seg.discussion, re.IGNORECASE)]
+            if re.search(filter, seg.discussion, flags)]
 
 
 def plot_metric(ref_data, test_data, fig, labels, location,
