@@ -50,10 +50,10 @@ setup(
                           "scipy>=1.4.1", 
                           "tqdm>=4.36.1",
                           "cdflib",
-                          "matplotlib>=3.1.1",
-                          "tensorflow >=1.13.1, <=1.15",
-                          "keras >=2.2.4, <=2.3.1"
+                          "matplotlib>=3.1.1"
                           ],
+      extras_require = {'gls': ["tensorflow >=1.13.1, <=1.15",
+                                "keras >=2.2.4, <=2.3.1"]},
       python_requires = '>=3.6',
       entry_points={
           'console_scripts': [
