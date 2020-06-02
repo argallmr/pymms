@@ -77,8 +77,10 @@ def get_sroi(start, sc='mms1'):
     return sroi['tstart'], sroi['tend']
 
 
-def plot_selections_in_sroi(sc, tstart,
-                            tstop=dt.datetime.now(), outdir=None):
+def plot_selections_in_sroi(sc, tstart, 
+                            tstop=dt.datetime.now(),
+                            outdir=None,
+                            **kwargs):
     
     # Get orbit range
     start_orbit = time_to_orbit(tstart)
@@ -99,43 +101,22 @@ def plot_selections_in_sroi(sc, tstart,
             try:
                 fig, axes = plot_burst_selections(sc,
                                                   sroi['tstart'][i],
-                                                  sroi['tend'][i]
+                                                  sroi['tend'][i],
+                                                  **kwargs
                                                   )
             except Exception as e:
                 print('Failed on orbit-{0} SROI-{1}'.format(orbit, i+1))
                 print(e)
                 continue
-        
-            plt.subplots_adjust(left=0.15, right=0.85, top=0.93)
+            
+            # Update title and selections limits
+            axes[0][0].set_title('{0} Orbit {1} SROI{2}'
+                                 .format(sc.upper(), orbit, i+1))
+            
+            # Save the figure
             if outdir is not None:
                 plt.savefig(outdir / fname_fmt.format(orbit, i+1))
             plt.close(fig)
-
-
-def download_ql_data(t0, t1):
-    t0 = dt.datetime(2020, 1, 17, 19, 30)
-    t1 = dt.datetime(2020, 1, 17, 21, 0)
-
-    t0 = dt.datetime(2019, 12, 16, 18, 0, 0)
-    t1 = dt.datetime(2019, 12, 17, 8, 0, 0)
-
-    start_date = dt.datetime.combine(t0.date(), dt.time(0, 0, 0))
-    end_date = dt.datetime.combine(t1.date() + dt.timedelta(days=1), dt.time(0, 0, 0))
-    api = sdc.MrMMS_SDC_API('mms1', 'afg', 'srvy', 'ql',
-                            start_date=start_date, end_date=end_date)
-    afg_files = api.download()
-
-    api.instr = 'edp'
-    api.mode = 'fast'
-    api.optdesc = 'dce'
-    edp_files = api.download()
-
-    api.instr = 'fpi'
-    api.optdesc = 'des'
-    des_files = api.download()
-
-    api.optdesc = 'dis'
-    dis_files = api.download()
 
 
 def plot_sroi(sc, tstart, sroi=1):
@@ -143,12 +124,18 @@ def plot_sroi(sc, tstart, sroi=1):
     fig, axes = plot_burst_selections(sc, tstart[sroi-1], tend[sroi-1])
     
     #fig.set_size_inches(6.5, 8)
-    plt.subplots_adjust(left=0.15, right=0.85, top=0.93)
     plt.show()
 
 
 def plot_burst_selections(sc, start_date, end_date,
-                          figsize=(5.5, 7)):
+                          outdir=(pymms.config['data_root']
+                                  + '/figures/burst_selections/'),
+                          sitl_file=None,
+                          abs_file=None,
+                          gls_file=None,
+                          img_fmt=None
+                          ):
+    figsize=(5.5, 7)
     mode = 'srvy'
     level = 'l2'
 
@@ -191,61 +178,57 @@ def plot_burst_selections(sc, start_date, end_date,
     
     
     # Grab selections
-#    abs_files = sdc.sitl_selections('abs_selections',
-#                                    start_date=start_date, end_date=end_date)
-#    gls_files = sdc.sitl_selections('gls_selections', gls_type='mp-dl-unh',
-#                                    start_date=start_date, end_date=end_date)
-
-    # Read the files
-    abs_data = sel.read_csv((pathlib.Path(pymms.config['dropbox_root'])
-                             / 'selections'
-                             / 'abs_selections_all_20150901_000000.csv'
-                             ),
-                            start_time=start_date, stop_time=end_date)
-    sitl_data = sel.read_csv((pathlib.Path(pymms.config['dropbox_root'])
-                             / 'selections'
-                             / 'sitl_selections_all_20150901_000000.csv'
-                             ),
-                             start_time=start_date, stop_time=end_date)
-    gls_data = sel.read_csv((pathlib.Path(pymms.config['dropbox_root'])
-                             / 'selections'
-                             / 'gls_selections_all_20191016_000000.csv'
-                             ),
-                            start_time=start_date, stop_time=end_date)
+    if abs_file is None:
+        abs_data = sel.selections('abs', start_date, end_date,
+                                  sort=True, combine=True, latest=True)
+    else:
+        abs_data = sel.read_csv(abs_file,
+                                start_time=start_date, stop_time=end_date)
+    
+    if sitl_file is None:
+        sitl_data = sel.selections('sitl+back', start_date, end_date,
+                                   sort=True, combine=True, latest=True)
+    else:
+        sitl_data = sel.read_csv(sitl_file,
+                                 start_time=start_date, stop_time=end_date)
+    
+    if gls_file is None:
+        gls_data = sel.selections('gls', start_date, end_date,
+                                  sort=True, combine=True, latest=True)
+    else:
+        gls_data = sel.read_csv(gls_file,
+                                start_time=start_date, stop_time=end_date)
 
     # SITL data time series
-    t_abs = []
-    x_abs = []
+    t_abs = [start_date]
+    x_abs = [0]
     for selection in abs_data:
         t_abs.extend([selection.start_time, selection.start_time,
                       selection.stop_time, selection.stop_time])
         x_abs.extend([0, selection.fom, selection.fom, 0])
-    if len(abs_data) == 0:
-        t_abs = [start_date, end_date]
-        x_abs = [0, 0]
+    t_abs.append(end_date)
+    x_abs.append(0)
     abs = metaarray.MetaArray(x_abs, x0=metatime.MetaTime(t_abs))
         
 
-    t_sitl = []
-    x_sitl = []
+    t_sitl = [start_date]
+    x_sitl = [0]
     for selection in sitl_data:
         t_sitl.extend([selection.start_time, selection.start_time,
                        selection.stop_time, selection.stop_time])
         x_sitl.extend([0, selection.fom, selection.fom, 0])
-    if len(sitl_data) == 0:
-        t_sitl = [start_date, end_date]
-        x_sitl = [0, 0]
+    t_sitl.append(end_date)
+    x_sitl.append(0)
     sitl = metaarray.MetaArray(x_sitl, x0=metatime.MetaTime(t_sitl))
 
-    t_gls = []
-    x_gls = []
+    t_gls = [start_date]
+    x_gls = [0]
     for selection in gls_data:
         t_gls.extend([selection.start_time, selection.start_time,
                       selection.stop_time, selection.stop_time])
         x_gls.extend([0, selection.fom, selection.fom, 0])
-    if len(gls_data) == 0:
-        t_gls = [start_date, end_date]
-        x_gls = [0, 0]
+    t_gls.append(end_date)
+    x_gls.append(0)
     gls = metaarray.MetaArray(x_gls, x0=metatime.MetaTime(t_gls))
     
     # Set attributes to make plot pretty
@@ -258,9 +241,11 @@ def plot_burst_selections(sc, start_date, end_date,
     fgm_data.label = ['Bx', 'By', 'Bz', '|B|']
     ni_data.title = 'N\n($cm^{-3}$)'
     ne_data.title = 'N\n($cm^{-3}$)'
+    abs.lim = (0, 200)
     abs.title = 'ABS'
-    gls.title = 'GLS'
     gls.lim = (0, 200)
+    gls.title = 'GLS'
+    sitl.lim = (0, 200)
     sitl.title = 'SITL'
     
     # Plot
@@ -268,36 +253,25 @@ def plot_burst_selections(sc, start_date, end_date,
         (especi_data, espece_data, fgm_data, ni_data, abs, gls, sitl),
         figsize=figsize
         )
-    plt.subplots_adjust(left=0.15, right=0.85, top=0.93)
+    plt.subplots_adjust(left=0.2, right=0.80, top=0.93)
+    
+    # Save the figure
+    if img_fmt is not None:
+        # Make sure the output directory exists
+        outdir = pathlib.Path(outdir)
+        if not outdir.exists():
+            outdir.mkdir(parents=True)
+        
+        # Create the file name
+        fname = ('burst_selections_{0}_{1}.{2}'
+                 .format(dt.datetime.strftime(start_date, '%Y%m%d%H%M%S'),
+                         dt.datetime.strftime(end_date, '%Y%m%d%H%M%S'),
+                         img_fmt)
+                 )
+        
+        plt.savefig(outdir / fname)
+    
     return fig, axes
-
-
-def read_mec_position(sc, start_date, end_date, optdesc='epht89d'):
-    mode = 'srvy'
-    level = 'l2'
-    
-    # MEC
-    tepoch = epochs.CDFepoch()
-    t_vname = 'Epoch'
-    r_vname = '_'.join((sc, 'mec', 'r', 'gse'))
-    api = sdc.MrMMS_SDC_API(sc, 'mec', mode, level, optdesc=optdesc,
-                            start_date=start_date, end_date=end_date)
-    files = api.download_files()
-    t_mec = np.empty(0, dtype='datetime64')
-    r_mec = np.empty((0, 3), dtype='float')
-    for file in files:
-        cdf = cdfread.CDF(file)
-        time = cdf.varget(t_vname)
-        t_mec = np.append(t_mec, tepoch.to_datetime(time, to_np=True), 0)
-        r_mec = np.append(r_mec, cdf.varget(r_vname), 0)
-    
-    # Filter based on time interval
-    dt_start = dt.datetime.strptime(start_date, '%Y-%m-%dT%H:%M:%S.%f')
-    dt_end = dt.datetime.strptime(end_date, '%Y-%m-%dT%H:%M:%S.%f')
-    istart = np.searchsorted(t_mec, dt_start)
-    iend = np.searchsorted(t_mec, dt_end)
-    
-    return t_mec[istart:iend], r_mec[istart:iend,:]
 
 
 if __name__ == '__main__':
@@ -319,8 +293,47 @@ if __name__ == '__main__':
                         help='End of time interval, formatted as ' \
                              '%%Y-%%m-%%dT%%H:%%M:%%S')
     
+    parser.add_argument('--sroi', 
+                        action='store_true',
+                        help='Make one plot per SROI')
+    
+    parser.add_argument('-d', '--directory',
+                        type=str,
+                        help='Directory in which to save figures',
+                        default=(pymms.config['gls_root']
+                                 + '/figures/burst_selections'))
+    
+    parser.add_argument('-s', '--sitl-file',
+                        type=str,
+                        help='CSV file containing SITL selections')
+    
+    parser.add_argument('-a', '--abs-file',
+                        type=str,
+                        help='CSV file containing ABS selections')
+    
+    parser.add_argument('-g', '--gls-file',
+                        type=str,
+                        help='CSV file containing GLS selections')
+    
+    parser.add_argument('-f', '--fig-type',
+                        type=str,
+                        help='Type of image to create (png, jpg, etc.)')
+    
+    args = parser.parse_args()
+    
     start_date = dt.datetime.strptime(args.tstart, '%Y-%m-%dT%H:%M:%S')
     end_date = dt.datetime.strptime(args.tend, '%Y-%m-%dT%H:%M:%S')
     
-    fig, axes = plot_burst_selections(sc, start_date, end_date)
+    if args.sroi:
+        func = plot_selections_in_sroi
+    else:
+        func = plot_burst_selections
+    
+    fig_axes = func(args.sc, start_date, end_date,
+                    outdir=args.directory,
+                    sitl_file=args.sitl_file,
+                    abs_file=args.abs_file,
+                    gls_file=args.gls_file,
+                    img_fmt=args.fig_type)
+
     plt.show()

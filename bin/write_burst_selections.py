@@ -103,10 +103,10 @@ if __name__ == '__main__':
     
     parser.add_argument('type',
                         type=str,
-                        help='Type of selections. Options ' \
-                             'are "abs", "sitl", or "gls_*", where "*" ' \
-                             'indicates the name of the ground loop ' \
-                             'algorithm.'
+                        help=('Type of selections. Options '
+                              'are "abs", "sitl", "sitl+back", or "gls_*", '
+                              'where "*" indicates the name of the ground loop '
+                              'algorithm.')
                         )
     
     parser.add_argument('tstart', 
@@ -146,4 +146,4 @@ if __name__ == '__main__':
     
     # Run the program
     burst_selections(args.file, args.type, tstart,
-                     sort=sort, combine=combine, unique=unique, filter=filter)
+                     sort=sort, combine=combine, filter=filter)
