@@ -589,6 +589,10 @@ class MrMMS_SDC_API:
         self._info_type = 'file_names'
         response = self.get()
 
+        # If no files were found, the empty string is the response
+        # Return [] instead of [''] so that len() is zero.
+        if response.text == '':
+            return []
         return response.text.split(',')
 
     def get(self):

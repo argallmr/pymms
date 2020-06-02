@@ -123,7 +123,7 @@ def _burst_data_segments_to_burst_segment(data):
         segment = BurstSegment(tstart, tend, fom, discussion,
                                sourceid=sourceid,
                                createtime=createtime)
-        segment .status = status
+        segment.status = status
         result.append(segment)
     return result
 
@@ -162,7 +162,13 @@ def _get_selections(type, start, stop,
         raise ValueError('Invalid selections type {}'.format(type))
 
     # Convert data into BurstSegments
-    data = converter(data)
+    # If there were no selections made, data will be empty without
+    # keys (and throws error in _sitl_selections_to_burst_segment).
+    try:
+        data = converter(data)
+    except KeyError:
+        return []
+
 
     # Get metadata associated with orbit, sroi, and metadata
     if metadata:
@@ -296,7 +302,7 @@ def _get_sroi_number(sroi, tstart, tstop):
 
 def _latest_segments(data, orbit_start, orbit_stop, sitl=False):
     '''
-    Return the last burst selections submission from each orbit.
+    Return the latest burst selections submission from each orbit.
 
     Burst selections can be submitted multiple times but only
     the latest file serves as the official selections file.
@@ -387,7 +393,7 @@ def _latest_segments(data, orbit_start, orbit_stop, sitl=False):
             # GLS and ABS selections can occur after the SITL window
             # closes, but those are treated the same as selections
             # made within the SITL window.
-            if create_time == segment.createtime:
+            if abs(create_time - segment.createtime) < dt.timedelta(seconds=10):
                 orbit_segments.append(segment)
             elif segment.createtime > create_time:
                 if sitl and (segment.createtime > sitl_window['tend'][0]):
@@ -450,7 +456,7 @@ def _sitl_selections_to_burst_segment(data):
     return result
 
 
-def combine_segments(data, delta_t=0):
+def combine_segments(data, dt_contig=0):
     '''
     Combine contiguous burst selections into single selections.
 
@@ -458,24 +464,34 @@ def combine_segments(data, delta_t=0):
     ----------
     data : list of `BurstSegment`
         Selections to be combined.
-    delta_t : int
+    dt_contig : int
         Time interval between adjacent selections. For selections
         returned by `pymms.sitl_selections()`, this is 0. For selections
         returned by `pymms.burst_data_segment()`, this is 10.
     '''
-    # Any time delta > delta_t sec indicates the end of a contiguous interval
+    # Any time delta > dt_contig sec indicates the end of a contiguous interval
     t_deltas = [(seg1.tstart - seg0.tstop).total_seconds()
                 for seg1, seg0 in zip(data[1:], data[:-1])
                 ]
-    t_deltas.append(1000)
+    
+    # Time deltas has one fewer element than data at this stage. Append
+    # infinity to the time deltas to indicate that the last element in data
+    # does not have a contiguous neighbor. This will make the number of
+    # elements in each array equal UNLESS data is empty. Do not append if
+    # data is empty (to avoid indexing errors below).
+    if len(data) > 0:
+        t_deltas.append(1000)
+    
     icontig = 0  # Current contiguous interval
     result = []
 
     # Check if adjacent elements are continuous in time
     #   - Use itertools.islice to select start index without copying array
     for idx, t_delta in enumerate(t_deltas):
-        # Contiguous segments are separated by delta_t seconds
-        if t_delta == delta_t:
+        # Contiguous segments are separated by dt_contig seconds.
+        # The last element of t_delta = 1000, so not pass this
+        # condition and idx+1 will not cause an IndexError
+        if t_delta == dt_contig:
             # And unique segments have the same fom and discussion
             if (data[icontig].fom == data[idx+1].fom) and \
                     (data[icontig].discussion == data[idx+1].discussion):
