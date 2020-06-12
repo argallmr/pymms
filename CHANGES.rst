@@ -9,11 +9,17 @@ The format is based on `Keep a Changelog`_, and this project adheres to `Semanti
 
 [Unreleased]
 ------------
+
+v0.3.0 (2020-06-12)
+------------
 Added
 ^^^^^
 * Time conversions between datetime, TAI, and TT2000
 * Support for GLS models
 
+Fixed
+^^^^^
+* Handle cases when no file names are returned by the SDC
 
 v0.2.2 (2020-05-22)
 ------------
