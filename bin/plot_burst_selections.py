@@ -300,7 +300,7 @@ if __name__ == '__main__':
     parser.add_argument('-d', '--directory',
                         type=str,
                         help='Directory in which to save figures',
-                        default=(pymms.config['gls_root']
+                        default=(pymms.config['data_root']
                                  + '/figures/burst_selections'))
     
     parser.add_argument('-s', '--sitl-file',

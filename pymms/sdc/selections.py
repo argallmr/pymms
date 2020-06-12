@@ -130,7 +130,7 @@ def _burst_data_segments_to_burst_segment(data):
 
 def _get_selections(type, start, stop,
                     sort=False, combine=False, latest=True, unique=False,
-                    metadata=False, filter=None):
+                    metadata=False, filter=None, case_sensitive=False):
 
     if latest and unique:
         raise ValueError('latest and unique keywords '
@@ -196,7 +196,8 @@ def _get_selections(type, start, stop,
     if unique:
         data = remove_duplicate_segments(data)
     if filter is not None:
-        data = filter_segments(data, filter)
+        data = filter_segments(data, filter,
+                               case_sensitive=case_sensitive)
 
     return data
 
@@ -985,7 +986,7 @@ def selection_overlap(ref, tests):
 
 def selections(type, start, stop,
                sort=False, combine=False, latest=True, unique=False,
-               metadata=False, filter=None):
+               metadata=False, filter=None, case_sensitive=False):
     '''
     Factory function for burst data selections.
 
@@ -1027,7 +1028,7 @@ def selections(type, start, stop,
     return _get_selections(type, start, stop,
                            sort=sort, combine=combine, unique=unique,
                            latest=latest, metadata=metadata,
-                           filter=filter)
+                           filter=filter, case_sensitive=case_sensitive)
 
 
 def sort_segments(data, createtime=False):

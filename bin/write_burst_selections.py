@@ -125,6 +125,11 @@ if __name__ == '__main__':
                         help='Filter results by applying regular expression ' \
                              'to the discussion string.')
     
+    parser.add_argument('-c', '--case-sensitive',
+                        type=str,
+                        action='store_true',
+                        help='Make the filter case sensitive.')
+    
     parser.add_argument('-s', '--split',
                         action='store_true',
                         help='Segements that were split remain split.')
@@ -146,4 +151,5 @@ if __name__ == '__main__':
     
     # Run the program
     burst_selections(args.file, args.type, tstart,
-                     sort=sort, combine=combine, filter=filter)
+                     sort=sort, combine=combine, filter=filter,
+                     case_sensitive=args.case_sensitive)
