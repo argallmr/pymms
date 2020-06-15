@@ -7,11 +7,15 @@ The format is based on `Keep a Changelog`_, and this project adheres to `Semanti
 .. _Keep a Changelog https://keepachangelog.com/en/1.0.0/
 .. _Semantic Versioning https://semver.org/spec/v2.0.0.html
 
-[Unreleased]
-------------
+v0.3.1 (2020-06-12)
+-------------------
+Changed
+^^^^^^^
+* Create a git tag without "v" so that Zenodo can process release
+* Incorporate Zenodo DOI into README
 
 v0.3.0 (2020-06-12)
-------------
+-------------------
 Added
 ^^^^^
 * Time conversions between datetime, TAI, and TT2000
@@ -22,7 +26,7 @@ Fixed
 * Handle cases when no file names are returned by the SDC
 
 v0.2.2 (2020-05-22)
-------------
+-------------------
 Added
 ^^^^^
 * Downlink status is now an attribute of SITL burst segments
@@ -41,7 +45,7 @@ Fixed
 * Typo preventing log-in if credentials not provided initially
 
 v0.2.1 (2020-04-24)
-------------
+-------------------
 Added
 ^^^^^
 * `util.tai.py` for converting to/from TAI times.
