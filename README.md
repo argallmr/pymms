@@ -1,3 +1,7 @@
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.3840766.svg)](https://doi.org/10.5281/zenodo.3840766)
+
+# PyMMS
+
 ## Installation
 
 For development purposes, install the package using
@@ -6,11 +10,11 @@ $ python3 setup.py develop --user
 ```
 This installation will reflect any changes made in the pymms development directory without the need to reinstall the package every single time.
 
-The pymms.gls package includes two user-runnable console commands: gls-mp and gls-mp-data. 
+## Scripts
 
-**gls-mp**
+### gls
 
-Calling gls-mp runs the mp-dl-unh model to generate predicted SITL selections over a date range.
+The `pymms.gls` package includes two user-runnable console commands: `gls-mp` and `gls-mp-data`. Calling `gls-mp` runs the `mp-dl-unh` model to generate predicted SITL selections over a date range.
 
 ```
 $ gls-mp -h
@@ -35,9 +39,7 @@ optional arguments:
                    MMS root data folder after each chunk.
 ```
 
-**gls-mp-data**
-
-Calling gls-mp-data generates a CSV file containing data formatted and preprocessed for gls-mp. This can be used when training your own version of mp-dl-unh.
+Calling `gls-mp-data` generates a CSV file containing data formatted and preprocessed for `gls-mp`. This can be used when training your own version of mp-dl-unh.
 
 ```
 $ gls-mp-data -h
@@ -67,9 +69,13 @@ optional arguments:
                         downloaded variables.
 ```
 
-If pymms is installed with the ``--user`` flag and pymms is used from a unix system, you must call:
+If PyMMS is installed with the ``--user`` flag and PyMMS is used from a unix system, you must call:
 ```bash
 $ export PATH=~/.local/bin$PATH
 $ source ~/.bash_profile
 ```
-before calling gls-mp or gls-mp-data.
+before calling `gls-mp` or `gls-mp-data`.
+
+## Citation
+
+If you make use of this software to analyze MMS use or data, please consider citing the software. Follow the Zenodo DOI at the top for a citation to the most recent release, or head to [Zenodo](https://doi.org/10.5281/zenodo.3765993) to see the citations/DOIs of other releases.
