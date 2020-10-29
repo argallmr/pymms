@@ -2,10 +2,12 @@ from cdflib import cdfread, epochs
 import pandas as pd
 import xarray as xr
 import numpy as np
+from matplotlib import pyplot as plt
+from matplotlib import dates as mdates
 
 def cdf_to_df(cdf_files, cdf_vars, epoch='Epoch'):
     '''
-    Read variables from CDF files into a data frame
+    Read variables from CDF files into a dataframe
     
     Parameters
     ----------
@@ -85,22 +87,19 @@ def cdf_to_df(cdf_files, cdf_vars, epoch='Epoch'):
 
 def cdf_to_ds(cdf_file, cdf_vars):
     '''
-    Read variables from CDF files into a data frame
+    Read variables from CDF files into an XArray DataSet
     
     Parameters
     ----------
-    cdf_files : str or list
-        CDF files to be read
+    cdf_file : str
+        Name of the CDF file to read
     cdf_vars : str or list
-        Names of the variables to be read
-    epoch : str
-        Name of the time variable that serves as the data frame index
+        Names of the variables to read
     
     Returns
     -------
-    out : `pandas.DataFrame`
-        The data. If a variable is 2D, "_#" is appended, where "#"
-        increases from 0 to var.shape[1]-1.
+    out : `xarray.DataSet`
+        The data.
     '''
     if not isinstance(cdf_file, str):
         raise ValueError('cdf_file must be a string or path.')
@@ -117,6 +116,21 @@ def cdf_to_ds(cdf_file, cdf_vars):
 
 
 def cdf_load_var(cdf, varname):
+    '''
+    Read a variable and its metadata into a xarray.DataArray
+    
+    Parameters
+    ----------
+    cdf : `cdfread.CDF`
+        The CDF file object
+    varname : str
+        Name of the variable to read
+    
+    Returns
+    -------
+    da : `xarray.DataArray`
+        The data with metadata
+    '''
     
     time_types = ('CDF_EPOCH', 'CDF_EPOCH16', 'CDF_TIME_TT2000')
     tepoch = epochs.CDFepoch()
@@ -127,7 +141,8 @@ def cdf_load_var(cdf, varname):
     data = cdf.varget(variable=varname)
     if varinq['Data_Type_Description'] in time_types:
         try:
-            data = epochs().to_datetime(data)
+            data = np.asarray([np.datetime64(t)
+                               for t in tepoch.to_datetime(data)])
         except TypeError:
             pass
     
@@ -160,43 +175,55 @@ def cdf_load_var(cdf, varname):
             # dependent variable. In this case, name the dimension
             # with the axis label.
             except KeyError:
-                if dim == 0:
-                    pass
-                elif dim == 1:
+                try:
                     dim_name = varatts['LABLAXIS']
-                else: 
-                    raise ValueError('Unknown coordinates for '
-                                     'dimension {}'.format(dim))
+                except KeyError:
+                    dim_name = varname
+                
+#                 if dim == 0:
+#                     pass
+#                 elif dim == 1:
+#                     print(varname)
+#                     dim_name = varatts['LABLAXIS']
+#                 else: 
+#                     raise ValueError('Unknown coordinates for '
+#                                      'dimension {}'.format(dim))
         
-        if dim_name is None:
+        if dim_name == varname:
             continue
         
         # Sometimes the same DEPEND_N or LABL_PTR_N variable is
         # used for multiple dimensions. A DataArray requires
-        # unique dimension names, so append "_dimN" to duplicate
-        # names.
-        key = dim_name
+        # unique coordinate names, so append "_dimN" to duplicate
+        # names. This happens for, e.g., a temperature tensor
+        # variable with dimensions [3,3] and labels ['x', 'y', 'z']
+        # for each dimension.
+        coord_name = dim_name
         if dim_name in coords:
-            key += '_dim{}'.format(dim)
+            coord_name += '_dim{}'.format(dim)
         
-        # Read the dependent variable data corresponding to dim
+        # DEPEND_# and LABL_PTR_# are pointers to other variables in the
+        # CDF file. Read the data from those variables as the coordinate
+        # values for this dimension.
         if dim_name in cdf.cdf_info()['zVariables']:
-            coords[key] = cdf_load_var(cdf, dim_name)
-        else:
-            coords[key] = np.arange(data.shape[dim])
+#            coords[coord_name] = cdf_load_var(cdf, dim_name)
+            
+            
+            coord_data = cdf_load_var(cdf, dim_name)
+            if len(coord_data.shape) == 1:
+                dim_name = coord_name
+            elif len(coord_data.shape) == 2:
+                dim_name = coord_data.dims[-1]
+            else:
+                ValueError('Coordinate has unexpected number of '
+                           'dimensions (>2).')
+            
+            coords[coord_name] = coord_data
+            dims.append(dim_name)
         
-        # For record varying dependent variables (2D), use
-        # the name of the data dimension (not the record-varying)
-        # dimension to label the dimension. The coordinate will
-        # be given the variable name, but the dimension is the
-        # non-record-varying dimension's name/label.
-        if len(coords[key].shape) == 2:
-            dim_name = coords[key].dims[-1]
-        elif len(coords[key].shape) > 2:
-            ValueError('Coordinate has unexpected number of '
-                       'dimensions (>2).')
-        dims.append(dim_name)
-        
+        elif dim > 0:
+            dims.append(dim_name)
+    
     # If the variable is not record varying, the "records" dimension
     # will be shallow and need to be removed so that data has the
     # same number of dimensions as dims has elements.
@@ -224,9 +251,26 @@ def cdf_load_var(cdf, varname):
 
 
 def cdf_get_dims(cdf, da):
+    '''
+    Get the names and number of dimensions of a CDF variable by
+    checking how many DEPEND_# variable attributes it has (# is a
+    number ranging from 0 to 3).
+    
+    Parameters
+    ----------
+    cdf : `cdfread.CDF`
+        The CDF file object
+    da : `xarray.DataArray`
+        The variable data and metadata
+    
+    Returns
+    -------
+    dims : list
+        Names of the dependent variable dimensions
+    '''
     
     dims = []
-    varatts = cdf.varattsget(var.cdf_name)
+    varatts = cdf.varattsget(da.cdf_name)
     for dep in range(4):
         try:
             attrvalue = varatts['DEPEND_{0}'.format(dep)]
@@ -238,6 +282,17 @@ def cdf_get_dims(cdf, da):
 
 
 def cdf_attget(cdf, da):
+    '''
+    Read the variable's metadata. Standardize some of the variable
+    attribute names.
+    
+    Parameters
+    ----------
+    cdf : `cdfread.CDF`
+        The CDF file object
+    da : `xarray.DataArray`
+        The variable data and metadata. da.attrs is edited in-place.
+    '''
     # Get variable attributes for given variable
     varatts = cdf.varattsget(da.attrs['cdf_name'])
 
@@ -276,60 +331,6 @@ def cdf_attget(cdf, da):
             attrname = 'units'
         
         da.attrs[attrname] = attrvalue
-
-
-def _cdflib_readvar(cdf, varname, tstart, tend):
-    global cdf_vars
-    global file_vars
-
-    # Data has already been read from this file
-    if varname in file_vars:
-        var = file_vars[varname]
-    else:
-        time_types = ('CDF_EPOCH', 'CDF_EPOCH16', 'CDF_TIME_TT2000')
-        varinq = cdf.varinq(varname)
-
-        # Convert epochs to datetimes
-        #   - None is returned if tstart and tend are outside data interval
-        data = cdf.varget(variable=varname, starttime=tstart, endtime=tend)
-        if varinq['Data_Type_Description'] in time_types:
-            try:
-                var = metatime.MetaTime(cdflib.cdfepoch().to_datetime(data))
-            except TypeError:
-                var = metatime.MetaTime(data)
-        else:
-            var = MetaArray(data)
-
-        # If the variable has been read from a different file, append
-        if (varname in cdf_vars) and varinq['Rec_Vary']:
-            d0 = cdf_vars[varname]
-            try:
-                var = np.append(d0, var, 0).view(type(var))
-            except ValueError:
-                if data is None:
-                    return d0
-                else:
-                    raise
-
-        # Create the variable
-        var.name = varname
-        var.rec_vary = varinq['Rec_Vary']
-        var.cdf_name = varinq['Variable']
-        var.cdf_type = varinq['Data_Type_Description']
-
-        # List as read
-        #  - Prevent infinite loop. Must save the variable in the registry
-        #  so that variable attributes do not try to read the same variable
-        #  again.
-        cdf_vars[varname] = var
-        file_vars[varname] = var
-
-        # Read the metadata
-        _cdflib_attget(cdf, var, tstart, tend)
-        _cdfattrs_to_gfxkeywords(var)
-
-    return var
-
 
 
 def rename_df_cols(df, old_col, new_cols):

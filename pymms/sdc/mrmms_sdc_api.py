@@ -274,6 +274,7 @@ class MrMMS_SDC_API:
 
         # Get available files
         local_files, remote_files = self.search()
+        
         if self.offline:
             return local_files
 
@@ -916,14 +917,30 @@ class MrMMS_SDC_API:
 
         # Search locally if offline
         if self.offline:
-            local_files = self.local_file_names()
             remote_files = []
+            local_files = self.local_file_names()
+            local_files = filter_time(local_files,
+                                      self.start_date,
+                                      self.end_date
+                                      )
 
         # Search remote first
         #   - SDC is definitive source of files
         #   - Returns most recent version
         else:
+            # Because file names contain only the start time of
+            # the data interval, filter_time will always return
+            # at least one file -- the file that starts before
+            # the time interval. Filter files before splitting
+            # them into local and remote files so that a lingering
+            # remote file will not remain if all valid files are
+            # local.
+            local_files = []
             remote_files = self.file_names()
+            remote_files = filter_time(remote_files,
+                                       self.start_date,
+                                       self.end_date
+                                       )
 
             # Search for the equivalent local file names
             local_files = self.remote2localnames(remote_files)
@@ -936,18 +953,6 @@ class MrMMS_SDC_API:
             remote_files = [remote_files[i] for i in range(len(remote_files))
                             if i not in idx
                             ]
-
-        # Filter based on time interval
-        if len(local_files) > 0:
-            local_files = filter_time(local_files,
-                                      self.start_date,
-                                      self.end_date
-                                      )
-        if len(remote_files) > 0:
-            remote_files = filter_time(remote_files,
-                                       self.start_date,
-                                       self.end_date
-                                       )
 
         return (local_files, remote_files)
 

@@ -1,7 +1,7 @@
 from pymms.sdc import mrmms_sdc_api as api
 from . import util
-from metaarray import metaarray
 import datetime as dt
+import xarray as xr
 
 
 def check_spacecraft(sc):
@@ -49,54 +49,9 @@ def check_coords(coords, instr='fgm', level='l2'):
                          )
 
 
-def load_data_xr(sc, mode, start_date, end_date,
-                 instr='fgm', level='l2', coords='gse'):
-    """
-    Load FPI distribution function data.
-    
-    Parameters
-    ----------
-    sc : str
-        Spacecraft ID: ('mms1', 'mms2', 'mms3', 'mms4')
-    mode : str
-        Instrument mode: ('fast', 'brst'). If 'srvy' is given, it is
-        automatically changed to 'fast'.
-    start_date, end_date : `datetime.datetime`
-        Start and end of the data interval.
-    
-    Returns
-    -------
-    dist : `metaarray.metaarray`
-        Particle distribution function.
-    """
-    
-    # Check the inputs
-    check_spacecraft(sc)
-    mode = check_mode(mode)
-    check_level(level, instr=instr)
-    check_coords(coords)
-    
-    # File and variable name parameters
-    b_vname = '_'.join((sc, instr, 'b', coords, mode, level))
-    
-    # Download the data
-    sdc = api.MrMMS_SDC_API(sc, instr, mode, level,
-                            start_date=start_date,
-                            end_date=end_date)
-    fgm_files = sdc.download_files()
-    
-    # Read the data from files
-    fgm_ds = util.cdf_to_ds(fgm_files, b_vname)
-    
-    # Read into Pandas DataFrame
-#    fgm_df = util.cdf_to_df(fgm_files, b_vname)
-#    util.rename_df_cols(fgm_df, b_vname, ('Bx', 'By', 'Bz', '|B|'))
-    
-    return fgm_ds
-
-
 def load_data(sc, mode, start_date, end_date,
-              instr='fgm', level='l2', coords='gse'):
+              instr='fgm', level='l2', coords='gse',
+              pd=False):
     """
     Load FPI distribution function data.
     
@@ -123,22 +78,37 @@ def load_data(sc, mode, start_date, end_date,
     check_coords(coords)
     
     # File and variable name parameters
+    t_vname = 'Epoch'
     b_vname = '_'.join((sc, instr, 'b', coords, mode, level))
+    b_labl_vname = '_'.join(('label', 'b', coords))
     
     # Download the data
     sdc = api.MrMMS_SDC_API(sc, instr, mode, level,
                             start_date=start_date,
                             end_date=end_date)
     fgm_files = sdc.download_files()
+    fgm_files = api.sort_files(fgm_files)[0]
     
     # Read the data from files
-    fgm_df = util.cdf_to_df(fgm_files, b_vname)
-    util.rename_df_cols(fgm_df, b_vname, ('Bx', 'By', 'Bz', '|B|'))
-#    bfield = metaarray.from_cdflib(fgm_files, b_vname,
-#                                   start_date=start_date,
-#                                   end_date=end_date)
-    
-    return fgm_df
+    if pd:
+        fgm_data = util.cdf_to_df(fgm_files, b_vname)
+        util.rename_df_cols(fgm_data, b_vname, ('Bx', 'By', 'Bz', '|B|'))
+    else:
+        # Concatenate data along the records (time) dimension, which
+        # should be equivalent to the DEPEND_0 variable name of the
+        # magnetic field variable.
+        fgm_data = []
+        for file in fgm_files:
+            fgm_data.append(util.cdf_to_ds(file, b_vname))
+        fgm_data = xr.concat(fgm_data, dim=fgm_data[0][b_vname].dims[0])
+        
+        fgm_data = fgm_data.rename({t_vname: 'time',
+                                    b_vname: 'B',
+                                    b_labl_vname: 'B_index'})
+        fgm_data = fgm_data.assign_coords(B_index=['Bx', 'By', 'Bz', '|B|'])
+        fgm_data = fgm_data.sel(time=slice(start_date, end_date))
+        
+    return fgm_data
 
 
 if __name__ == '__main__':

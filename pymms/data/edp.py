@@ -1,6 +1,6 @@
 from pymms.sdc import mrmms_sdc_api as api
 from . import util
-from metaarray import metaarray
+import xarray as xr
 
 
 def check_spacecraft(sc):
@@ -66,7 +66,7 @@ def load_scpot(sc, mode, start_date, end_date,
     # File and variable name parameters
     instr = 'edp'
     optdesc = 'scpot'
-    epoch_vname = '_'.join((sc, instr, 'epoch', mode, level))
+    t_vname = '_'.join((sc, instr, 'epoch', mode, level))
     scpot_vname = '_'.join((sc, instr, optdesc, mode, level))
     
     # Download the data
@@ -75,16 +75,20 @@ def load_scpot(sc, mode, start_date, end_date,
                             start_date=start_date,
                             end_date=end_date)
     edp_files = sdc.download_files()
+    edp_files = api.sort_files(edp_files)[0]
     
-    # Read the data from files
-    scpot_df = util.read_cdf_vars(edp_files, scpot_vname,
-                                  epoch=epoch_vname)
-#    scpot = metaarray.from_cdflib(edp_files, scpot_vname,
-#                                  start_date=start_date,
-#                                  end_date=end_date)
-    scpot_df.rename(columns={scpot_vname: 'V_sc'}, inplace=True)
+    # Concatenate data along the records (time) dimension, which
+    # should be equivalent to the DEPEND_0 variable name of the
+    # magnetic field variable.
+    edp_data = []
+    for file in edp_files:
+        edp_data.append(util.cdf_to_ds(file, scpot_vname))
+    edp_data = xr.concat(edp_data, dim=edp_data[0][scpot_vname].dims[0])
+    edp_data = edp_data.rename({t_vname: 'time',
+                                scpot_vname: 'Vsc'})
+    edp_data = edp_data.sel(time=slice(start_date, end_date))
 
-    return scpot_df
+    return edp_data
 
 if __name__ == '__main__':
     pass
