@@ -7,6 +7,16 @@ The format is based on `Keep a Changelog`_, and this project adheres to `Semanti
 .. _Keep a Changelog https://keepachangelog.com/en/1.0.0/
 .. _Semantic Versioning https://semver.org/spec/v2.0.0.html
 
+v0.4.0 (Not released)
+-------------------
+Added
+^^^^^
+* pymms.data for reading and handling data
+
+Fixed
+^^^^^
+* File search no longer returns single remote file when all are local
+
 v0.3.1 (2020-06-12)
 -------------------
 Changed
