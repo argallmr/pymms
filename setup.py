@@ -57,8 +57,8 @@ setup(
       python_requires = '>=3.6',
       entry_points={
           'console_scripts': [
-              'gls-mp-data = pymms.gls.gls_mp_data:download_from_cmd',
-              'gls-mp = pymms.gls.gls_mp:main'
+              'gls-mp-data = pymms.gls.mp_dl_unh.data:download_from_cmd',
+              'gls-mp = pymms.gls.mp_dl_unh.data:main'
           ]
       }
       )
