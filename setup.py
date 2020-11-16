@@ -53,10 +53,12 @@ setup(
                           "cdflib",
                           "matplotlib>=3.1.1"
                           ],
-      extras_require = {'gls': ["tensorflow >=1.13.1, <=1.15",
+      extras_require = {'data': ["cdflib >= 3.7.0",
+                                 "pandas >= 1.0.3",
+                                 "xarray >= 0.16.0"],
+                        'gls': ["tensorflow >=1.13.1, <=1.15",
                                 "keras >=2.2.4, <=2.3.1"],
-                        'data': ["cdflib >= 3.7.0",
-                                 "xarray >= 0.16.0"]},
+                        'sql': [""]},
       python_requires = '>=3.6',
       entry_points={
           'console_scripts': [
