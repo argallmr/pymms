@@ -181,10 +181,12 @@ def load_moms(sc, mode, species, start_date, end_date):
     t_perp_vname = '_'.join((sc, instr, 'tempperp', mode))
     v_labl_vname = '_'.join((sc, instr, 'bulkv', 'dbcs', 'label', mode))
     q_labl_vname = '_'.join((sc, instr, 'heatq', 'dbcs', 'label', mode))
+    espectr_vname = '_'.join((sc, instr, 'energyspectr', 'omni', mode))
     cart1_labl_vname = '_'.join((sc, instr, 'cartrep', mode))
     cart2_labl_vname = '_'.join((sc, instr, 'cartrep', mode, 'dim2'))
+    e_labl_vname = '_'.join((sc, instr, 'energy', mode))
     varnames = [n_vname, v_vname, p_vname, t_vname, q_vname,
-                t_para_vname, t_perp_vname]
+                t_para_vname, t_perp_vname, espectr_vname]
     
     # Download the data
     sdc = api.MrMMS_SDC_API(sc, 'fpi', mode, 'l2',
@@ -212,8 +214,11 @@ def load_moms(sc, mode, species, start_date, end_date):
                                 t_perp_vname: 'tempperp',
                                 v_labl_vname: 'velocity_index',
                                 q_labl_vname: 'heatflux_index',
+                                espectr_vname: 'omnispectr',
                                 cart1_labl_vname: 'cart_index_dim1',
-                                cart2_labl_vname: 'cart_index_dim2'})
+                                cart2_labl_vname: 'cart_index_dim2',
+                                'energy': 'energy_index',
+                                e_labl_vname: 'energy'})
     fpi_data = fpi_data.sel(time=slice(start_date, end_date))
     
     fpi_data = fpi_data.assign(t=(fpi_data['temptensor'][:,0,0] 
