@@ -141,9 +141,7 @@ def load_dist(sc, mode, species, start_date, end_date):
     return dist
 
 
-def load_moms(sc, mode, species,
-              start_date, end_date,
-              maxwell_entropy=False):
+def load_moms(sc, mode, species, start_date, end_date):
     """
     Load FPI distribution function data.
     
@@ -183,10 +181,12 @@ def load_moms(sc, mode, species,
     t_perp_vname = '_'.join((sc, instr, 'tempperp', mode))
     v_labl_vname = '_'.join((sc, instr, 'bulkv', 'dbcs', 'label', mode))
     q_labl_vname = '_'.join((sc, instr, 'heatq', 'dbcs', 'label', mode))
+    espectr_vname = '_'.join((sc, instr, 'energyspectr', 'omni', mode))
     cart1_labl_vname = '_'.join((sc, instr, 'cartrep', mode))
     cart2_labl_vname = '_'.join((sc, instr, 'cartrep', mode, 'dim2'))
+    e_labl_vname = '_'.join((sc, instr, 'energy', mode))
     varnames = [n_vname, v_vname, p_vname, t_vname, q_vname,
-                t_para_vname, t_perp_vname]
+                t_para_vname, t_perp_vname, espectr_vname]
     
     # Download the data
     sdc = api.MrMMS_SDC_API(sc, 'fpi', mode, 'l2',
@@ -214,8 +214,11 @@ def load_moms(sc, mode, species,
                                 t_perp_vname: 'tempperp',
                                 v_labl_vname: 'velocity_index',
                                 q_labl_vname: 'heatflux_index',
+                                espectr_vname: 'omnispectr',
                                 cart1_labl_vname: 'cart_index_dim1',
-                                cart2_labl_vname: 'cart_index_dim2'})
+                                cart2_labl_vname: 'cart_index_dim2',
+                                'energy': 'energy_index',
+                                e_labl_vname: 'energy'})
     fpi_data = fpi_data.sel(time=slice(start_date, end_date))
     
     fpi_data = fpi_data.assign(t=(fpi_data['temptensor'][:,0,0] 
@@ -236,10 +239,9 @@ def load_moms(sc, mode, species,
     return fpi_data
 
 
-def load_moms_pd(sc, mode, species, start_date, end_date,
-                 maxwell_entropy=False):
+def load_moms_pd(sc, mode, species, start_date, end_date):
     """
-    Load FPI distribution function data.
+    Load FPI moments as a Pandas DataFrame.
     
     Parameters
     ----------
@@ -255,8 +257,8 @@ def load_moms_pd(sc, mode, species, start_date, end_date,
     
     Returns
     -------
-    dist : `metaarray.metaarray`
-        Particle distribution function.
+    moms : `pandas.DataFrame`
+        Moments of the distribution function.
     """
     
     # Check the inputs
@@ -326,6 +328,27 @@ def load_moms_pd(sc, mode, species, start_date, end_date,
 
 
 def maxwellian_distribution(dist, density, bulkv, temperature):
+    """
+    Given a measured velocity distribution function, create a Maxwellian
+    distribution function with the same density, bulk velociy, and
+    temperature.
+    
+    Parameters
+    ----------
+    dist : `xarray.DataSet`
+        A time series of 3D velocity distribution functions
+    density : `xarray.DataArray`
+        Number density computed from `dist`.
+    bulkv : `xarray.DataArray`
+        Bulk velocity computed from `dist`.
+    temperature : `xarray.DataArray`
+        Scalar temperature computed from `dist`
+    
+    Returns
+    -------
+    f_max : `xarray.DataSet`
+        Maxwellian distribution function.
+    """
     
     eV2K = constants.value('electron volt-kelvin relationship')
     eV2J = constants.eV
@@ -366,6 +389,21 @@ def maxwellian_distribution(dist, density, bulkv, temperature):
 
 
 def maxwellian_entropy(N, P):
+    """
+    Calculate the maxwellian entropy of a distribution.
+    
+    Parameters
+    ----------
+    N : `xarray.DataArray`
+        Number density.
+    P : `xarray.DataArray`
+        Scalar pressure.
+    
+    Returns
+    -------
+    Sb : `xarray.DataArray`
+        Maxwellian entropy
+    """
     J2eV = constants.value('joule-electron volt relationship')
     kB   = constants.k
     mass = species_to_mass(N.attrs['species'])
@@ -387,6 +425,23 @@ def maxwellian_entropy(N, P):
 
 
 def moments(dist, moment, **kwargs):
+    """
+    Calculate the moments a velocity distribution function.
+    
+    Parameters
+    ----------
+    dist : `xarray.DataSet`
+        Number density.
+    moment : str
+        Name of the moment of the distribution to calculate.
+    \*\*kwargs : dict
+        Keywords for the corresponding moments function.
+    
+    Returns
+    -------
+    Sb : `xarray.DataArray`
+        Maxwellian entropy
+    """
     valid_moms = ('density', 'velocity', 'pressure', 'temperature',
                   'entropy', 'epsilon',
                   'N', 'V', 'P', 'T', 'S', 'e')
@@ -544,7 +599,19 @@ def precondition(dist, E0=100, E_low=10, scpot=None,
 
 
 def species_to_mass(species):
+    '''
+    Return the mass (kg) of the given particle species.
     
+    Parameters
+    ----------
+    species : str
+        Particle species: 'i' or 'e'
+    
+    Returns
+    ----------
+    mass : float
+        Mass of the given particle species
+    '''
     if species == 'i':
         mass = constants.m_p
     elif species == 'e':
@@ -595,6 +662,28 @@ def density(dist, **kwargs):
 
 
 def entropy(dist, **kwargs):
+    '''
+    Calculate entropy from a time series of 3D velocity space
+    distribution function.
+    
+    .. [1] Liang, H., Cassak, P. A., Servidio, S., Shay, M. A., Drake,
+        J. F., Swisdak, M., … Delzanno, G. L. (2019). Decomposition of
+        plasma kinetic entropy into position and velocity space and the
+        use of kinetic entropy in particle-in-cell simulations. Physics
+        of Plasmas, 26(8), 82903. https://doi.org/10.1063/1.5098888
+    
+    Parameters
+    ----------
+    dist : `xarray.DataArray`
+        A time series of 3D distribution functions
+    \*\*kwargs : dict
+        Keywords accepted by the `precondition` function.
+    
+    Returns
+    -------
+    S : `xarray.DataArray`
+        Entropy
+    '''
     mass = species_to_mass(dist.attrs['species'])
     
     f = precondition(dist, **kwargs)
@@ -615,6 +704,39 @@ def entropy(dist, **kwargs):
 
 
 def epsilon(dist, dist_max=None, N=None, V=None, T=None, **kwargs):
+    '''
+    Calculate epsilon [1]_ from a time series of 3D velocity space
+    distribution functions.
+    
+    .. [1] Greco, A., Valentini, F., Servidio, S., &
+        Matthaeus, W. H. (2012). Inhomogeneous kinetic effects related
+        to intermittent magnetic discontinuities. Phys. Rev. E,
+        86(6), 66405. https://doi.org/10.1103/PhysRevE.86.066405
+    
+    Parameters
+    ----------
+    dist : `xarray.DataArray`
+        A time series of 3D distribution functions
+    dist_max : `xarray.DataArray`
+        The maxwellian equivalent of `dist`. If not provided,
+        it is calculated
+    N : `xarray.DataArray`
+        Number density computed from `dist`. If not provided,
+        it is calculated
+    V : `xarray.DataArray`
+        Bulk velocity computed from `dist`. If not provided,
+        it is calculated
+    T : `xarray.DataArray`
+        Scalar temperature computed from `dist`. If not provided,
+        it is calculated
+    \*\*kwargs : dict
+        Keywords accepted by the `precondition` function.
+    
+    Returns
+    -------
+    e : `xarray.DataArray`
+        Epsilon parameter
+    '''
     mass = species_to_mass(dist.attrs['species'])
     if N is None:
         N = density(dist, **kwargs)
@@ -645,6 +767,28 @@ def epsilon(dist, dist_max=None, N=None, V=None, T=None, **kwargs):
 
 
 def pressure(dist, N=None, T=None, **kwargs):
+    '''
+    Calculate pressure tensor from a time series of 3D velocity space
+    distribution function.
+    
+    Parameters
+    ----------
+    dist : `xarray.DataArray`
+        A time series of 3D distribution functions
+    N : `xarray.DataArray`
+        Number density computed from `dist`. If not provided,
+        it is calculated
+    T : `xarray.DataArray`
+        Scalar temperature computed from `dist`. If not provided,
+        it is calculated
+    \*\*kwargs : dict
+        Keywords accepted by the `precondition` function.
+    
+    Returns
+    -------
+    P : `xarray.DataArray`
+        Pressure tensor
+    '''
     mass = species_to_mass(dist.attrs['species'])
     if N is None:
         N = density(dist, **kwargs)
@@ -663,6 +807,28 @@ def pressure(dist, N=None, T=None, **kwargs):
 
 
 def temperature(dist, N=None, V=None, **kwargs):
+    '''
+    Calculate the temperature tensor from a time series of 3D velocity
+    space distribution function.
+    
+    Parameters
+    ----------
+    dist : `xarray.DataArray`
+        A time series of 3D distribution functions
+    N : `xarray.DataArray`
+        Number density computed from `dist`. If not provided,
+        it is calculated
+    V : `xarray.DataArray`
+        Bulk velocity computed from `dist`. If not provided,
+        it is calculated
+    \*\*kwargs : dict
+        Keywords accepted by the `precondition` function.
+    
+    Returns
+    -------
+    T : `xarray.DataArray`
+        Temperature tensor
+    '''
     mass = species_to_mass(dist.attrs['species'])
     if N is None:
         N = density(dist, **kwargs)
@@ -689,6 +855,25 @@ def temperature(dist, N=None, V=None, **kwargs):
 
 
 def velocity(dist, N=None, **kwargs):
+    '''
+    Calculate velocity from a time series of 3D velocity space
+    distribution functions.
+    
+    Parameters
+    ----------
+    dist : `xarray.DataArray`
+        A time series of 3D distribution functions
+    N : `xarray.DataArray`
+        Number density computed from `dist`. If not provided,
+        it is calculated
+    \*\*kwargs : dict
+        Keywords accepted by the `precondition` function.
+    
+    Returns
+    -------
+    V : `xarray.DataArray`
+        Bulk velocity
+    '''
     mass = species_to_mass(dist.attrs['species'])
     if N is None:
         N = density(dist, **kwargs)
@@ -713,9 +898,15 @@ def velocity(dist, N=None, **kwargs):
 
 def density_3D(f, mass, E0):
     '''
-    Calculate number density from a single 3D distribution function.
+    Calculate number density from a single 3D velocity space
+    distribution function.
     
-    The 'phi', 'theta', and 'energy' variables must be time-independent.
+    Notes
+    -----
+    This is needed because the azimuthal bin locations in the
+    burst data FPI distribution functions is time dependent. By
+    extracting single distributions, the phi, theta, and energy
+    variables become time-independent and easier to work with.
     
     Parameters
     ----------
@@ -747,6 +938,40 @@ def density_3D(f, mass, E0):
 
 
 def entropy_3D(f, mass, E0):
+    '''
+    Calculate entropy from a single 3D velocity space
+    distribution function.
+    
+    Notes
+    -----
+    This is needed because the azimuthal bin locations in the
+    burst data FPI distribution functions is time dependent. By
+    extracting single distributions, the phi, theta, and energy
+    variables become time-independent and easier to work with.
+    
+    Calculation of velocity and kinetic entropy can be found in
+    Liang, et al, PoP (2019) [1]_
+    
+    .. [1] Liang, H., Cassak, P. A., Servidio, S., Shay, M. A., Drake,
+        J. F., Swisdak, M., … Delzanno, G. L. (2019). Decomposition of
+        plasma kinetic entropy into position and velocity space and the
+        use of kinetic entropy in particle-in-cell simulations. Physics
+        of Plasmas, 26(8), 82903. https://doi.org/10.1063/1.5098888
+    
+    Parameters
+    ----------
+    f : `xarray.DataArray`
+        A preconditioned 3D distribution function
+    mass : float
+        Mass (kg) of the particle species represented in the distribution.
+    E0 : float
+        Energy used to normalize the energy bins to [0, inf)
+    
+    Returns
+    -------
+    S : `xarray.DataArray`
+        Velocity space entropy
+    '''
     kB = constants.k # J/K
     
     # Integrate over phi and theta
@@ -766,6 +991,40 @@ def entropy_3D(f, mass, E0):
 
 
 def epsilon_3D(f, mass, E0, f_max, N):
+    '''
+    Calculate the epsilon entropy parameter [1]_ from a single 3D velocity space
+    distribution function.
+    
+    .. [1] Greco, A., Valentini, F., Servidio, S., &
+        Matthaeus, W. H. (2012). Inhomogeneous kinetic effects related
+        to intermittent magnetic discontinuities. Phys. Rev. E,
+        86(6), 66405. https://doi.org/10.1103/PhysRevE.86.066405
+    
+    Notes
+    -----
+    This is needed because the azimuthal bin locations in the
+    burst data FPI distribution functions is time dependent. By
+    extracting single distributions, the phi, theta, and energy
+    variables become time-independent and easier to work with.
+    
+    Parameters
+    ----------
+    f : `xarray.DataArray`
+        A preconditioned 3D distribution function
+    mass : float
+        Mass (kg) of the particle species represented in the distribution.
+    E0 : float
+        Energy used to normalize the energy bins to [0, inf)
+    f_max : `xarray.DataArray`
+        An equivalent, preconditioned Maxwellian distribution
+    N : `xarray.DataArray`
+        Number density computed from `f`.
+    
+    Returns
+    -------
+    epsilon : `xarray.DataArray`
+        Epsilon entropy parameter
+    '''
     eV2J = constants.eV
     
     # Integrate phi and theta
@@ -784,6 +1043,34 @@ def epsilon_3D(f, mass, E0, f_max, N):
     
 
 def pressure_3D(N, T):
+    '''
+    Calculate the epsilon entropy parameter [1]_ from a single 3D velocity space
+    distribution function.
+    
+    .. [1] Greco, A., Valentini, F., Servidio, S., &
+        Matthaeus, W. H. (2012). Inhomogeneous kinetic effects related
+        to intermittent magnetic discontinuities. Phys. Rev. E,
+        86(6), 66405. https://doi.org/10.1103/PhysRevE.86.066405
+    
+    Notes
+    -----
+    This is needed because the azimuthal bin locations in the
+    burst data FPI distribution functions is time dependent. By
+    extracting single distributions, the phi, theta, and energy
+    variables become time-independent and easier to work with.
+    
+    Parameters
+    ----------
+    N : `xarray.DataArray`
+        Number density.
+    T : `xarray.DataArray`
+        Temperature tensor`.
+    
+    Returns
+    -------
+    P : `xarray.DataArray`
+        Pressure tensor
+    '''
     kB = constants.k
     eV2K = constants.value('electron volt-kelvin relationship')
     
@@ -793,6 +1080,35 @@ def pressure_3D(N, T):
 
 
 def temperature_3D(f, mass, E0, N, V):
+    '''
+    Calculate the temperature tensor from a single 3D velocity space
+    distribution function.
+    
+    Notes
+    -----
+    This is needed because the azimuthal bin locations in the
+    burst data FPI distribution functions is time dependent. By
+    extracting single distributions, the phi, theta, and energy
+    variables become time-independent and easier to work with.
+    
+    Parameters
+    ----------
+    f : `xarray.DataArray`
+        A preconditioned 3D distribution function
+    mass : float
+        Mass (kg) of the particle species represented in the distribution.
+    E0 : float
+        Energy used to normalize the energy bins to [0, inf)
+    N : `xarray.DataArray`
+        Number density computed from `f`.
+    V : `xarray.DataArray`
+        Bulk velocity computed from `f`.
+    
+    Returns
+    -------
+    T : `xarray.DataArray`
+        Temperature tensor
+    '''
     K2eV = constants.value('kelvin-electron volt relationship')
     eV2J = constants.eV
     kB = constants.k # J/k
@@ -849,6 +1165,33 @@ def temperature_3D(f, mass, E0, N, V):
 
 
 def velocity_3D(f, mass, E0, N):
+    '''
+    Calculate the bulk velocity from a single 3D velocity space
+    distribution function.
+    
+    Notes
+    -----
+    This is needed because the azimuthal bin locations in the
+    burst data FPI distribution functions is time dependent. By
+    extracting single distributions, the phi, theta, and energy
+    variables become time-independent and easier to work with.
+    
+    Parameters
+    ----------
+    f : `xarray.DataArray`
+        A preconditioned 3D distribution function
+    mass : float
+        Mass (kg) of the particle species represented in the distribution.
+    E0 : float
+        Energy used to normalize the energy bins to [0, inf)
+    N : `xarray.DataArray`
+        Number density computed from `f`.
+    
+    Returns
+    -------
+    V : `xarray.DataArray`
+        Bulk velocity
+    '''
     eV2J = constants.eV
     
     # Integrate over phi
@@ -876,15 +1219,20 @@ def velocity_3D(f, mass, E0, N):
 
 def density_4D(f, mass, E0):
     '''
-    Calculate number density from a time series of 3D distribution function.
+    Calculate number density from a time series of 3D velocity space
+    distribution functions.
     
-    The 'phi' and 'theta' variables must be time-independent while the
-    'energy' variable is time-dependent.
+    Notes
+    -----
+    The FPI fast survey velocity distribution functions are time-independent
+    (1D) in azimuth and polar angles but time-dependent (2D) in energy. The
+    `xarray.DataArray.integrate` function works only with 1D data (phi and
+    theta). For energy, we can use `numpy.trapz`.
     
     Parameters
     ----------
     f : `xarray.DataArray`
-        A preconditioned 3D distribution function
+        A preconditioned 3D time-dependent velocity distribution function
     mass : float
         Mass (kg) of the particle species represented in the distribution.
     E0 : float
@@ -913,6 +1261,37 @@ def density_4D(f, mass, E0):
 
 
 def entropy_4D(f, mass, E0):
+    '''
+    Calculate entropy [1]_ from a time series of 3D velocity space
+    distribution functions.
+    
+    .. [1] Liang, H., Cassak, P. A., Servidio, S., Shay, M. A., Drake,
+        J. F., Swisdak, M., … Delzanno, G. L. (2019). Decomposition of
+        plasma kinetic entropy into position and velocity space and the
+        use of kinetic entropy in particle-in-cell simulations. Physics
+        of Plasmas, 26(8), 82903. https://doi.org/10.1063/1.5098888
+    
+    Notes
+    -----
+    The FPI fast survey velocity distribution functions are time-independent
+    (1D) in azimuth and polar angles but time-dependent (2D) in energy. The
+    `xarray.DataArray.integrate` function works only with 1D data (phi and
+    theta). For energy, we can use `numpy.trapz`.
+    
+    Parameters
+    ----------
+    f : `xarray.DataArray`
+        A preconditioned 3D time-dependent velocity distribution function
+    mass : float
+        Mass (kg) of the particle species represented in the distribution.
+    E0 : float
+        Energy used to normalize the energy bins to [0, inf)
+    
+    Returns
+    -------
+    S : `xarray.DataArray`
+        Velocity space entropy
+    '''
     kB = constants.k # J/K
     
     S = 1e12 * f
@@ -933,6 +1312,40 @@ def entropy_4D(f, mass, E0):
 
 
 def epsilon_4D(f, mass, E0, f_max, N):
+    '''
+    Calculate the epsilon entropy parameter [1]_ from a time series of 3D
+    velocity space distribution functions.
+    
+    .. [1] Greco, A., Valentini, F., Servidio, S., &
+        Matthaeus, W. H. (2012). Inhomogeneous kinetic effects related
+        to intermittent magnetic discontinuities. Phys. Rev. E,
+        86(6), 66405. https://doi.org/10.1103/PhysRevE.86.066405
+    
+    Notes
+    -----
+    The FPI fast survey velocity distribution functions are time-independent
+    (1D) in azimuth and polar angles but time-dependent (2D) in energy. The
+    `xarray.DataArray.integrate` function works only with 1D data (phi and
+    theta). For energy, we can use `numpy.trapz`.
+    
+    Parameters
+    ----------
+    f : `xarray.DataArray`
+        A preconditioned 3D time-dependent velocity distribution function
+    mass : float
+        Mass (kg) of the particle species represented in the distribution.
+    E0 : float
+        Energy used to normalize the energy bins to [0, inf)
+    f_max : `xarray.DataArray`
+        An equivalent, preconditioned Maxwellian distribution
+    N : `xarray.DataArray`
+        Number density computed from `f`.
+    
+    Returns
+    -------
+    epsilon : `xarray.DataArray`
+        Entropy parameter
+    '''
     eV2J = constants.eV
     
     df = ((f - f_max)**2).integrate('phi')
@@ -950,6 +1363,29 @@ def epsilon_4D(f, mass, E0, f_max, N):
 
 
 def pressure_4D(N, T):
+    '''
+    Calculate the pressure tensor from a time series of 3D velocity space
+    distribution functions.
+    
+    Notes
+    -----
+    The FPI fast survey velocity distribution functions are time-independent
+    (1D) in azimuth and polar angles but time-dependent (2D) in energy. The
+    `xarray.DataArray.integrate` function works only with 1D data (phi and
+    theta). For energy, we can use `numpy.trapz`.
+    
+    Parameters
+    ----------
+    N : `xarray.DataArray`
+        Number density 
+    T : `xarray.DataArray`
+        Temperature tensor
+    
+    Returns
+    -------
+    P : `xarray.DataArray`
+        Pressure tensor
+    '''
     kB = constants.k
     eV2K = constants.value('electron volt-kelvin relationship')
     
@@ -959,6 +1395,35 @@ def pressure_4D(N, T):
 
 
 def temperature_4D(f, mass, E0, N, V):
+    '''
+    Calculate the temperature tensor from a time series of 3D velocity space
+    distribution functions.
+    
+    Notes
+    -----
+    The FPI fast survey velocity distribution functions are time-independent
+    (1D) in azimuth and polar angles but time-dependent (2D) in energy. The
+    `xarray.DataArray.integrate` function works only with 1D data (phi and
+    theta). For energy, we can use `numpy.trapz`.
+    
+    Parameters
+    ----------
+    f : `xarray.DataArray`
+        A preconditioned 3D time-dependent velocity distribution function
+    mass : float
+        Mass (kg) of the particle species represented in the distribution.
+    E0 : float
+        Energy used to normalize the energy bins to [0, inf)
+    N : `xarray.DataArray`
+        Number density computed from `f`.
+    V : `xarray.DataArray`
+        Bulk velocity computed from `f`.
+    
+    Returns
+    -------
+    T : `xarray.DataArray`
+        Temperature tensor
+    '''
     K2eV = constants.value('kelvin-electron volt relationship')
     eV2J = constants.eV
     kB = constants.k # J/k
@@ -1019,6 +1484,33 @@ def temperature_4D(f, mass, E0, N, V):
 
 
 def velocity_4D(f, mass, E0, N):
+    '''
+    Calculate the bulk velocity from a time series of 3D velocity space
+    distribution functions.
+    
+    Notes
+    -----
+    The FPI fast survey velocity distribution functions are time-independent
+    (1D) in azimuth and polar angles but time-dependent (2D) in energy. The
+    `xarray.DataArray.integrate` function works only with 1D data (phi and
+    theta). For energy, we can use `numpy.trapz`.
+    
+    Parameters
+    ----------
+    f : `xarray.DataArray`
+        A preconditioned 3D time-dependent velocity distribution function
+    mass : float
+        Mass (kg) of the particle species represented in the distribution.
+    E0 : float
+        Energy used to normalize the energy bins to [0, inf)
+    N : `xarray.DataArray`
+        Number density computed from `f`.
+    
+    Returns
+    -------
+    V : `xarray.DataArray`
+        Bulk velocity
+    '''
     eV2J = constants.eV
     kB = constants.k # J/K
     

@@ -7,6 +7,30 @@ The format is based on `Keep a Changelog`_, and this project adheres to `Semanti
 .. _Keep a Changelog https://keepachangelog.com/en/1.0.0/
 .. _Semantic Versioning https://semver.org/spec/v2.0.0.html
 
+v0.4.1
+------------
+Added
+^^^^^
+* Read FPI omnidirectional energy spectrograms
+
+Fixed
+^^^^^
+* The data directory now has __init__.py to make it a subpackage
+
+v0.4.0
+------
+Added
+^^^^^
+* pymms.data for reading and handling data
+
+Changed
+^^^^^^^
+* Added sql subpackage to extras
+
+Fixed
+^^^^^
+* File search no longer returns single remote file when all are local
+
 v0.3.1 (2020-06-12)
 -------------------
 Changed
