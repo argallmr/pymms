@@ -1,12 +1,334 @@
 from pymms.sdc import mrmms_sdc_api as api
-from . import fgm, edp, util
+from . import fgm, edp
 import datetime as dt
 import numpy as np
 import xarray as xr
 from scipy import constants
-from matplotlib import pyplot as plt
-from matplotlib import rc
 import warnings
+
+#ePhoto_Downloader
+import re
+import requests
+import pathlib
+from pymms import config
+from . import util
+from tqdm import tqdm
+
+# prep_ephoto
+from cdflib import cdfread
+
+model_url = 'https://lasp.colorado.edu/mms/sdc/public/data/models/fpi/'
+data_root = pathlib.Path(config['data_root'])
+
+
+class ePhoto_Downloader(util.Downloader):
+    '''
+    Class to download FPI photoelectron distribution functions.
+        *download
+        *fname
+        *intervals
+        load
+        load_local_file
+        *local_file_exists
+        *local_path
+        *local_dir
+    '''
+    def __init__(self, sc='mms1', instr='fpi', mode='fast', level='l2',
+                 starttime='2017-07-11T22:33:30',
+                 endtime='2017-07-11T22:34:30',
+                 optdesc=None):
+        '''
+        Instatiate an PHI Photoelectron Downloader object.
+        
+        Parameters
+        ----------
+        sc : str, default='mms1'
+            Spacecraft identifier. Must be one of
+            ("mms1", "mms2", "mms3", "mms4")
+        instr : str, default='fpi'
+            Instrument. Must be "fpi"
+        mode : str, default='fast'
+            Data rate mode. Must be one of ("fast", "srvy", "brst")
+        level : str, default="l2"
+            Data level. Must be one of
+            ("l1b", "sitl", "ql", "l2", "trig")
+        starttime, endtime : `datetime.datetime`
+            Start and end time of the data interval
+        optdesc : str
+            Optional descriptor. Must begin with "dis-" or "des-" and end
+            with one of ("dist", "moms", "partmoms")
+        '''
+        self.sc = sc
+        self.instr = instr
+        self.mode = mode
+        self.level = level
+        self.optdesc = optdesc
+        self.starttime = starttime
+        self.endtime = endtime
+        self.optdesc = optdesc
+    
+    def download(self, filename):
+    
+        remote_file = model_url + '/' + fname
+        local_file = self.local_dir() / fname
+        
+        r = requests.get(remote_file, stream=True, allow_redirects=True)
+        total_size = int(r.headers.get('content-length'))
+        initial_pos = 0
+        
+        # Download 
+        with open(local_fname, 'wb') as f:
+            with tqdm(total=total_size, unit='B', unit_scale=True,
+                      desc=remote_fname, initial=initial_pos,
+                      ascii=True) as pbar:
+                    
+                for chunk in r.iter_content(chunk_size=1024):
+                    if chunk:
+                        f.write(chunk)
+                        pbar.update(len(chunk))
+    
+        return local_file
+    
+    def fname(self, stepper, version=None):
+        '''
+        Return a model file name.
+        
+        Parameters
+        ----------
+        stepper : str
+            Stepper ID for the file name. Options are:
+            ('0-2', '3-5', '6-8', '12-14', '15-17')
+        version : str
+            File version number formatted as 'X.Y.Z', where X, Y, and Z
+            are integers. If not given, a file name with the appropriate
+            stepper id will be searched for on the web.
+        
+        Returns
+        -------
+        fname : str
+            File name of the photoelectron model
+        '''
+        # Validate the stepper value
+        steppers = ('0-2', '3-5', '6-8', '12-14', '15-17')
+        if stepper not in steppers:
+            raise ValueError('Stepper {0} is not in {1}'
+                             .format(stepper, steppers))
+        
+        # If no version was given, use a regular expression to try
+        # and capture the file from the model file listing
+        if version is None:
+            v = '[0-9]+.[0-9]+.[0-9]+'
+        else:
+            v = version
+        
+        # Build the file name
+        fname = '_'.join(('mms', self.instr, self.mode, self.level,
+                          'des-bgdist', 'v'+v, 'p'+stepper))
+
+        # If no version was given, search online for possible files.
+        if version is None:
+            model_fnames = self.model_listing()
+            files = [f
+                     for f in model_fnames
+                     if bool(re.match(fname, f))]
+            
+            if len(files) == 1:
+                fname = files[0]
+            else:
+                raise ValueError("One file expected. {0} found: {1}"
+                                 .format(len(files), files))
+        else:
+            fname += '.cdf'
+        
+        return fname
+    
+    @staticmethod
+    def fname_stepper(fname):
+        '''
+        Extract the stepper ID from the file name.
+        '''
+        return fname[fname.rfind('p')+1:fname.rfind('.')]
+    
+    @staticmethod
+    def fname_version(fname):
+        '''
+        Extract the version number from the file name.
+        '''
+        return fname.split('_')[5][1:]
+    
+    def load(self, stepper, version=None):
+        '''
+        Load data
+        '''
+        if version is None:
+            filename = self.fname(stepper)
+            version = filename.split('_')[5][1:]
+        file_path = self.local_path(stepper, version)
+        
+        # Download the file
+        if not file_path.exists():
+            filename = self.download(filename)
+        
+        # Load all of the data variables from the file
+        ds = util.cdf_to_ds(str(file_path))
+        return ds
+    
+    def local_dir(self):
+        '''
+        Local directory where model files are saved. This is relative
+        to the PyMMS data root.
+        
+        Returns
+        -------
+        dir : pathlib.Path
+            Local directory
+        '''
+        return pathlib.Path('data', 'models', 'fpi')
+    
+    def local_file_exists(self, stepper, version):
+        '''
+        Check if a local file exists.
+        
+        Parameters
+        ----------
+        
+        Returns
+        -------
+        exists : bool
+            True if local file exists. False otherwise.
+        '''
+        return self.local_path(stepper, version).exists()
+    
+    def local_path(self, stepper, version):
+        '''
+        Absolute path to a single file.
+        
+        Parameters
+        ----------
+        
+        Returns
+        -------
+        path : str
+            Absolute file path
+        '''
+        local_path = self.local_dir() / self.fname(stepper, version=version)
+        return data_root / local_path
+    
+    def model_listing(self):
+        '''
+        Retrieve a listing of photoelectron model files.
+        
+        Returns
+        -------
+        files : list
+            Names of model files available at the SDC
+        '''
+        # Find the file names
+        #   - Location where they are stored
+        #   - Pattern matching the file names
+        #   - Download the page to serve as a directory listing
+        #   - Parse the page for file names
+        fpattern = ('<a href="(mms_fpi_(brst|fast)_l2_des-bgdist_'
+                    'v[0-9]+.[0-9]+.[0-9]+_p[0-9]+-[0-9]+.cdf)">')
+        response = requests.get(model_url)
+        
+        return [match.group(1)
+                for match in re.finditer(fpattern, response.text)]
+    
+    @property
+    def sc(self):
+        return self._sc
+    @sc.setter
+    def sc(self, sc):
+        '''
+        Check that a valid spacecraft ID was given.
+    
+        Parameters
+        ----------
+        sc : str
+            Spacecraft identifier
+        '''
+        if sc not in ('mms1', 'mms2', 'mms3', 'mms4'):
+            raise ValueError('Spacecraft ID {0} must be one of '
+                             '("mms1", "mms2", "mms3", "mms4").'
+                             .format(sc))
+        self._sc = sc
+    
+    @property
+    def instr(self):
+        return self._instr
+    @instr.setter
+    def instr(self, instr):
+        '''
+        Instrument.
+        
+        Parameters
+        ----------
+        instr : str
+            Data rate mode. Must be ("fpi").
+        '''
+        if instr != 'fpi':
+            raise ValueError('Instrument {0} must "fpi"'.format(instr))
+        self._instr = instr
+    
+    @property
+    def mode(self):
+        return self._mode
+    @mode.setter
+    def mode(self, mode):
+        '''
+        Set the mode property.
+        
+        Parameters
+        ----------
+        mode : str
+            Data rate mode. Must be ("fast", "srvy", "brst"). "srvy"
+            is translated to "fast"
+        '''
+        if mode == 'srvy':
+            mode == 'fast'
+        elif mode not in ('fast', 'brst'):
+            raise ValueError('Data rate mode {0} must be one of '
+                             '("fast", "brst").'.format(mode))
+        self._mode = mode
+    
+    @property
+    def level(self):
+        return self._level
+    @level.setter
+    def level(self, level):
+        '''
+        Set the data level property.
+        
+        Parameters
+        ----------
+        level : str
+            Data rate mode. Must be ("l1b", "sitl", "ql", "l2", "trig")
+        '''
+        if level == 'srvy':
+            level == 'fast'
+        elif level not in ("l1b", "sitl", "ql", "l2", "trig"):
+            raise ValueError('Data rate mode {0} must be one of '
+                             '("l1b", "sitl", "ql", "l2", "trig").'
+                             .format(level))
+        self._level = level
+    
+    @property
+    def starttime(self):
+        return self._starttime
+    @starttime.setter
+    def starttime(self, starttime):
+        # Convert string to datetime64 object
+        self._starttime = np.datetime64(starttime, 's')
+    
+    @property
+    def endtime(self):
+        return self._endtime
+    @starttime.setter
+    def endtime(self, endtime):
+        # Convert string to datetime object
+        self._starttime = np.datetime64(endtime, 's')
+    
 
 def check_spacecraft(sc):
     '''
@@ -67,7 +389,123 @@ def check_species(species):
                          'Must be ("i", "e")')
 
 
-def load_dist(sc, mode, species, start_date, end_date):
+def download_ephoto_models():
+    '''
+    Download photoelectron model distribution functions.
+    
+    The file names of the photoelectron models contain the stepper-ids. Which
+    stepper-id is in use is found externally, in the appropriate dis-moms or
+    des-moms
+    '''
+    
+    # Find the file names
+    #   - Location where they are stored
+    #   - Pattern matching the file names
+    #   - Download the page to serve as a directory listing
+    url = 'https://lasp.colorado.edu/mms/sdc/public/data/models/fpi/'
+    fpattern = ('mms_fpi_(brst|fast)_l2_d(i|e)s-bgdist_'
+                'v[0-9]+.[0-9]+.[0-9]+_p[0-9]+-[0-9]+.cdf')
+    response = requests.get(url)
+    
+    # Local repository
+    local_dir = data_root.joinpath(*url.split('/')[6:9])
+    if not local_dir.exists():
+        local_dir.mkdir(parents=True)
+    local_files = []
+    
+    # Parse the page and download the files
+    for match in re.finditer(fpattern, response.text):
+        
+        # Remote file
+        remote_fname = match.group(0)
+        remote_file = '/'.join((url, remote_fname))
+        
+        # Local file after download
+        local_fname = local_dir / remote_fname
+        
+        
+        r = requests.get(remote_file, stream=True, allow_redirects=True)
+        total_size = int(r.headers.get('content-length'))
+        initial_pos = 0
+        
+        # Download 
+        with open(local_fname, 'wb') as f:
+            with tqdm(total=total_size, unit='B', unit_scale=True,
+                      desc=remote_fname, initial=initial_pos,
+                      ascii=True) as pbar:
+                    
+                for chunk in r.iter_content(chunk_size=1024):
+                    if chunk:
+                        f.write(chunk)
+                        pbar.update(len(chunk))
+        
+        local_files.append(local_fname)
+    
+    return local_files
+
+
+def prep_ephoto(sdc, startdelphi, parity=None):
+    '''
+    Prepare the photo electron distributions
+    '''
+    # Download the moments file
+    sdc.optdesc = 'des-moms'
+    moms_files = sdc.download_files()
+    
+    moms_files = api.sort_files(moms_files)[0]
+    cdf = cdfread.CDF(moms_files[0])
+    scl = np.float(cdf.attget('Photoelectron_model_scaling_factor', entry=0)['Data'])
+    fphe = cdf.attget('Photoelectron_model_filenames', entry=0)['Data']
+    cdf.close()
+    
+    # Check to see if the file name and scaling factor change
+    # If it does, the implementation will have to change to be
+    # applied on a per-file basis
+    for file in moms_files[1:]:
+        cdf = cdfread.CDF(file)
+        if scl != cdf.attget('Photoelectron_model_scaling_factor'):
+            raise ValueError('Scale factor changes between files.')
+        if fphe != cdf.attget('Photoelectron_model_filenames'):
+            raise ValueError('Photoelectron mode file name changes.')
+        cdf.close()
+    
+    # Extract the stepper number
+    stepper = ePhoto_Downloader.fname_stepper(fphe)
+    version = ePhoto_Downloader.fname_version(fphe)
+    
+    # Load the photo-electron model file
+    ePhoto = ePhoto_Downloader(mode=sdc.mode)
+    f_photo = ePhoto.load(stepper, version)
+    
+    # Map the measured startdelphi to the model startdelphi
+    idx = np.int16(np.floor(startdelphi/16))
+    if sdc.mode == 'brst':
+        f_p0_vname = '_'.join(('mms', 'des', 'bgdist', 'p0', sdc.mode))
+        f_p1_vname = '_'.join(('mms', 'des', 'bgdist', 'p1', sdc.mode))
+        sdp_vname = '_'.join(('mms', 'des', 'startdelphi', 'counts', sdc.mode))
+        
+        f0 = f_photo[f_p0_vname][idx,:,:,:]
+        f1 = f_photo[f_p1_vname][idx,:,:,:]
+        
+        f0 = f0.rename({sdp_vname: 'Epoch'}).assign_coords({'Epoch': startdelphi['Epoch']})
+        f1 = f1.rename({sdp_vname: 'Epoch'}).assign_coords({'Epoch': startdelphi['Epoch']})
+        
+        # Select the proper parity
+        f_model = f0.where(parity == 0, f1)
+    else:
+        f_vname = '_'.join(('mms', 'des', 'bgdist', sdc.mode))
+        sdp_vname = '_'.join(('mms', 'des', 'startdelphi', 'counts', sdc.mode))
+        
+        f_model = (f_photo[f_vname][idx,:,:,:]
+                   .rename({sdp_vname: 'Epoch'})
+                   .assign_coords({'Epoch': startdelphi['Epoch']})
+                   )
+
+    return scl * f_model
+
+
+def load_dist(sc, mode, species, start_date, end_date,
+              ephoto=True):
     """
     Load FPI distribution function data.
     
@@ -82,6 +520,9 @@ def load_dist(sc, mode, species, start_date, end_date):
         Particle species: ('i', 'e') for ions and electrons, respectively.
     start_date, end_date : `datetime.datetime`
         Start and end of the data interval.
+    ephoto : bool
+        Remove photo electrons from the distribution. Applies only to
+        des data. Requires downloading the des-moms files
     
     Returns
     -------
@@ -102,6 +543,8 @@ def load_dist(sc, mode, species, start_date, end_date):
     phi_vname = '_'.join((sc, instr, 'phi', mode))
     theta_vname = '_'.join((sc, instr, 'theta', mode))
     energy_vname = '_'.join((sc, instr, 'energy', mode))
+    startdelphi_vname = '_'.join((sc, instr, 'startdelphi', 'count', mode))
+    parity_vname = '_'.join((sc, instr, 'steptable', 'parity', mode))
     
     # Download the data
     sdc = api.MrMMS_SDC_API(sc, 'fpi', mode, 'l2',
@@ -115,10 +558,51 @@ def load_dist(sc, mode, species, start_date, end_date):
     # should be equivalent to the DEPEND_0 variable name of the
     # density variable.
     fpi_data = []
+    variables = [dist_vname]
+    if (species == 'e') & ephoto:
+        variables.append(startdelphi_vname)
+        if mode == 'brst':
+            variables.append(parity_vname)
+    
     for file in fpi_files:
-        fpi_data.append(util.cdf_to_ds(file, dist_vname))
+        fpi_data.append(util.cdf_to_ds(file, variables))
     fpi_data = xr.concat(fpi_data, dim=fpi_data[0][dist_vname].dims[0])
     dist = fpi_data[dist_vname]
+    
+    # Subtract photoelectrons
+    if ephoto & (species == 'e'):
+        if mode == 'brst':
+            phi_rename = 'phi'
+            f_model = prep_ephoto(sdc,
+                                  fpi_data[startdelphi_vname],
+                                  fpi_data[parity_vname])
+        else:
+            phi_rename = phi_vname
+            f_model = prep_ephoto(sdc,
+                                  fpi_data[startdelphi_vname])
+        
+        # Re-assign coordinates so that the model can be subtracted
+        # from the distribution. Note that the energy tables for
+        # parity 0 and parity 1 are no longer in the des-dist files
+        # or the model files, so it is impossible to reconstruct the
+        # coordinates. Stealing them from the distribution itself
+        # should be fine, though, because we used the measured
+        # distribution as a template.
+        sector_index_vname = '_'.join(('mms', 'des', 'sector', 'index', mode))
+        pixel_index_vname = '_'.join(('mms', 'des', 'pixel', 'index', mode))
+        energy_index_vname = '_'.join(('mms', 'des', 'energy', 'index', mode))
+        
+        f_model = (f_model
+                   .rename({sector_index_vname: phi_rename,
+                            pixel_index_vname: theta_vname,
+                            energy_index_vname: 'energy'})
+                   .assign_coords({phi_vname: dist[phi_vname],
+                                   theta_vname: dist[theta_vname],
+                                   energy_vname: dist[energy_vname]})
+                   .drop_vars(['phi', 'energy'], errors='ignore')
+                   )
+        
+        dist -= f_model
     
     # Rename coordinates
     #   - Phi is record varying in burst but not in survey data,
@@ -327,7 +811,7 @@ def load_moms_pd(sc, mode, species, start_date, end_date):
     return fpi_df
 
 
-def maxwellian_distribution(dist, density, bulkv, temperature):
+def maxwellian_distribution(dist, N=None, bulkv=None, T=None):
     """
     Given a measured velocity distribution function, create a Maxwellian
     distribution function with the same density, bulk velociy, and
@@ -337,11 +821,11 @@ def maxwellian_distribution(dist, density, bulkv, temperature):
     ----------
     dist : `xarray.DataSet`
         A time series of 3D velocity distribution functions
-    density : `xarray.DataArray`
+    N : `xarray.DataArray`
         Number density computed from `dist`.
     bulkv : `xarray.DataArray`
         Bulk velocity computed from `dist`.
-    temperature : `xarray.DataArray`
+    T : `xarray.DataArray`
         Scalar temperature computed from `dist`
     
     Returns
@@ -355,6 +839,14 @@ def maxwellian_distribution(dist, density, bulkv, temperature):
     kB   = constants.k
     mass = species_to_mass(dist.attrs['species'])
     
+    if density is None:
+        N = density(dist)
+    if bulkv is None:
+        bulkv = velocity(dist, N=N)
+    if T is None:
+        T = temperature(dist, N=N, V=bulkv)
+    
+    
     phi = np.deg2rad(dist['phi'])
     theta = np.deg2rad(dist['theta'])
     velocity = np.sqrt(2.0 * eV2J / mass * dist['energy'])  # m/s
@@ -363,10 +855,10 @@ def maxwellian_distribution(dist, density, bulkv, temperature):
     vysqr = (-velocity * np.sin(theta) * np.sin(phi) - (1e3*bulkv[:,1]))**2
     vzsqr = (-velocity * np.cos(theta) - (1e3*bulkv[:,2]))**2
     
-    f_out = (1e-6 * density 
-             * (mass / (2 * np.pi * kB * eV2K * temperature))**(3.0/2.0)
+    f_out = (1e-6 * N 
+             * (mass / (2 * np.pi * kB * eV2K * T))**(3.0/2.0)
              * np.exp(-mass * (vxsqr + vysqr + vzsqr)
-                      / (2.0 * kB * eV2K * temperature))
+                      / (2.0 * kB * eV2K * T))
              )
     f_out = f_out.drop('velocity_index')
     
@@ -544,17 +1036,27 @@ def precondition(dist, E0=100, E_low=10, scpot=None,
     # Adjust for spacecraft potential
     #   - E' = E +- q*Vsc, where + is for ions and - is for electrons
     if scpot is not None:
-        sign = -1 if dist.attrs['species'] == 'e' else 1
+#        sign = -1 if dist.attrs['species'] == 'e' else 1
+        sign = -1
         f_out['energy'] += (sign * J2eV * e * scpot['Vsc'])
     
     # Low energy integration limit
-    #   - Exclude data below the limit
-    iGtELow = ((f_out['energy'][0, :] >= E_low) == False).argmin().values.item()
-    f_out = f_out[:, :, :, iGtELow:]
+    #   - Exclude data below the low-energy limit
+    #   - xr.DataArray.integrate does not avoid NaNs
+    #   - Fill with 0.0 because at front of array and trapezoidal integration
+    #     results in zero area.
+    mask = f_out['energy'] >= E_low
+    energy = f_out['energy'].where(mask, 0.0)
+    f_out = f_out.where(mask, 0.0)
+    f_out = f_out.assign_coords({'energy': energy})
     
-    # For electrons, exclude measurements from below the spacecraft potential
-#    if scpot is not None:
-#        f_out = f_out.where(f_out['energy'] >= 0, np.nan)
+    # Exclude measurements from below the spacecraft potential
+    #   - Same reasoning as for low-energy integration limit
+    if scpot is not None:
+        mask = f_out['energy'] >= 0
+        energy = f_out['energy'].where(mask, 0.0)
+        f_out = f_out.where(mask, 0.0)
+        f_out = f_out.assign_coords({'energy': energy})
     
     # Energy extrapolation
     #   - Map the energy to range [0, 1]
@@ -896,6 +1398,56 @@ def velocity(dist, N=None, **kwargs):
     return V
 
 
+def vspace_entropy(dist, N=None, s=None, **kwargs):
+    '''
+    Calculate entropy from a time series of 3D velocity space
+    distribution function.
+    
+    .. [1] Liang, H., Cassak, P. A., Servidio, S., Shay, M. A., Drake,
+        J. F., Swisdak, M., … Delzanno, G. L. (2019). Decomposition of
+        plasma kinetic entropy into position and velocity space and the
+        use of kinetic entropy in particle-in-cell simulations. Physics
+        of Plasmas, 26(8), 82903. https://doi.org/10.1063/1.5098888
+    
+    Parameters
+    ----------
+    dist : `xarray.DataArray`
+        A time series of 3D distribution functions
+    N : `xarray.DataArray`
+        Number density computed from `dist`
+    s : `xarray.DataArray`
+        Entropy density computed from `dist`
+    \*\*kwargs : dict
+        Keywords accepted by the `precondition` function.
+    
+    Returns
+    -------
+    sv : `xarray.DataArray`
+        Velocity space entropy density
+    '''
+    mass = species_to_mass(dist.attrs['species'])
+    if N is None:
+        N = density(dist, **kwargs)
+    if s is None:
+        s = entropy(dist, **kwargs)
+    
+    f = precondition(dist, **kwargs)
+    
+    if dist.attrs['mode'] == 'brst':
+        sv = xr.concat([vspace_entropy_3D(f1, mass, f.attrs['Energy_e0'], n1, s1)
+                        for f1, n1, s1 in zip(f, N, s)],
+                       'time')
+    else:
+        sv = vspace_entropy_4D(f, mass, f.attrs['Energy_e0'], N, s)
+    
+    sv.name = 'sv{}'.format(dist.attrs['species'])
+    sv.attrs['long_name'] = 'Velocity space entropy density'
+    sv.attrs['standard_name'] = 'entropy_density'
+    sv.attrs['units'] = 'J/K/m^3 ln(...)'
+    
+    return sv
+
+
 def density_3D(f, mass, E0):
     '''
     Calculate number density from a single 3D velocity space
@@ -926,7 +1478,7 @@ def density_3D(f, mass, E0):
     
     N = f.integrate('phi')
     N = (np.sin(N['theta']) * N).integrate('theta')
-        
+    
     # Integrate over Energy
     y = np.sqrt(N['U']) / (1-N['U'])**(5/2) * N
     y[-1] = 0
@@ -975,8 +1527,14 @@ def entropy_3D(f, mass, E0):
     kB = constants.k # J/K
     
     # Integrate over phi and theta
+    #   - Measurement bins with zero counts result in a
+    #     phase space density of 0
+    #   - Photo-electron correction can result in negative
+    #     phase space density.
+    #   - Log of value <= 0 is nan. Avoid be replacing
+    #     with 1 so that log(1) = 0
     S = 1e12 * f
-    S = S.where(S != 0, 1)
+    S = S.where(S > 0, 1)
     S = (S * np.log(S)).integrate('phi')
     S = (np.sin(S['theta']) * S).integrate('theta')
     
@@ -1217,6 +1775,78 @@ def velocity_3D(f, mass, E0, N):
     return V
 
 
+def vspace_entropy_3D(f, mass, E0, N, s):
+    '''
+    Calculate velocity space entropy from a single 3D velocity space
+    distribution function. Because the 
+    
+    Notes
+    -----
+    This is needed because the azimuthal bin locations in the
+    burst data FPI distribution functions is time dependent. By
+    extracting single distributions, the phi, theta, and energy
+    variables become time-independent and easier to work with.
+    
+    Calculation of velocity and kinetic entropy can be found in
+    Liang, et al, PoP (2019) `[1]`_. The implementation here takes into
+    account the fact that the FPI energy bins are not equally spaced.
+    
+    .. [1]: Liang, H., Cassak, P. A., Servidio, S., Shay, M. A., Drake,
+        J. F., Swisdak, M., … Delzanno, G. L. (2019). Decomposition of
+        plasma kinetic entropy into position and velocity space and the
+        use of kinetic entropy in particle-in-cell simulations. Physics
+        of Plasmas, 26(8), 82903. https://doi.org/10.1063/1.5098888
+    
+    Parameters
+    ----------
+    f : `xarray.DataArray`
+        A preconditioned 3D distribution function
+    mass : float
+        Mass (kg) of the particle species represented in the distribution.
+    E0 : float
+        Energy (eV) used to normalize the energy bins to [0, inf)
+    
+    Returns
+    -------
+    S : `xarray.DataArray`
+        Velocity space entropy
+    '''
+    kB = constants.k # J/K
+    eV2J = constants.eV
+    
+    # Assume that the azimuth and polar angle bins are equal size
+    dtheta = f['theta'].diff(dim='theta').mean().item()
+    dphi = f['phi'].diff(dim='phi').mean().item()
+    
+    # Calculate the factors that associated with the normalized
+    # volume element
+    #   - U ranges from [0, inf] and np.inf/np.inf = nan
+    #   - Set the last element of y along U manually to 0
+    #   - log(0) = -inf; Zeros come from theta and y. Reset to zero
+    #   - Photo-electron correction can result in negative phase space
+    #     density. log(-1) = nan
+    coeff = np.sqrt(2) * (eV2J*E0/mass)**(3/2) # m^3/s^3
+    y = (np.sqrt(f['U']) / (1 - f['U'])**(5/2)) * (np.sin(f['theta']))
+    y[-1,:] = 0
+    with np.errstate(invalid='ignore', divide='ignore'):
+        lnydy = np.log(y * np.sin(f['theta']) * dtheta * dphi)
+    lnydy = lnydy.where(np.isfinite(lnydy), 0)
+    
+    # Terms in that make up the velocity space entropy density
+    sv1 = 1e6 * N * np.log(1e6 * N) # 1/m^3 * ln(1/m^3)
+    sv2 = np.log(coeff) * N # 1/m^3 ln(m^3/s^3)
+    sv3 = s # J/K/m^3 ln(s^3/m^6) -- Already multiplied by -kB
+    
+    sv4 = (lnydy * f).integrate('phi')
+    sv4 = (np.sin(f['theta']) * sv4).integrate('theta')
+    sv4 = coeff * sv4.integrate('U') # 1/m^3
+    
+    # Velocity space entropy density
+    sv = kB * (sv1 - sv2 - sv4) + sv3 # J/K/m^3 * ln(...)
+    
+    return sv
+
+
 def density_4D(f, mass, E0):
     '''
     Calculate number density from a time series of 3D velocity space
@@ -1249,6 +1879,8 @@ def density_4D(f, mass, E0):
     N = (np.sin(N['theta'])*N).integrate('theta')
     
     # Integrate over Energy
+    #   - U ranges from [0, inf] and np.inf/np.inf = nan
+    #   - Set the last element of the energy dimension of y to 0
     E0 = f.attrs['Energy_e0']
     y = np.sqrt(f['U']) / (1-f['U'])**(5/2) * N
     y[:,-1] = 0
@@ -1294,8 +1926,15 @@ def entropy_4D(f, mass, E0):
     '''
     kB = constants.k # J/K
     
+    # Integrate over phi and theta
+    #   - Measurement bins with zero counts result in a
+    #     phase space density of 0
+    #   - Photo-electron correction can result in negative
+    #     phase space density.
+    #   - Log of value <= 0 is nan. Avoid be replacing
+    #     with 1 so that log(1) = 0
     S = 1e12 * f
-    S = S.where(S != 0, 1)
+    S = S.where(S > 0, 1)
     S = (S * np.log(S)).integrate('phi')
     S = (np.sin(S['theta']) * S).integrate('theta')
     
@@ -1538,4 +2177,65 @@ def velocity_4D(f, mass, E0, N):
     V = V.assign_coords(velocity_index=['Vx', 'Vy', 'Vz'])
     
     return V
+
+
+def vspace_entropy_4D(f, mass, E0, N, s):
+    '''
+    Calculate velocity space entropy density from a time series of 3D
+    velocity space distribution functions.
     
+    Notes
+    -----
+    The FPI fast survey velocity distribution functions are time-independent
+    (1D) in azimuth and polar angles but time-dependent (2D) in energy. The
+    `xarray.DataArray.integrate` function works only with 1D data (phi and
+    theta). For energy, we can use `numpy.trapz`.
+    
+    Parameters
+    ----------
+    f : `xarray.DataArray`
+        A preconditioned 3D time-dependent velocity distribution function
+    mass : float
+        Mass (kg) of the particle species represented in the distribution.
+    E0 : float
+        Energy used to normalize the energy bins to [0, inf)
+    
+    Returns
+    -------
+    sv : `xarray.DataArray`
+        Velocity space entropy density
+    '''
+    kB = constants.k # J/K
+    eV2J = constants.eV
+    
+    # Assume that the azimuth and polar angle bins are equal size
+    dtheta = f['theta'].diff(dim='theta').mean().item()
+    dphi = f['phi'].diff(dim='phi').mean().item()
+    
+    # Calculate the factors that associated with the normalized
+    # volume element
+    #   - U ranges from [0, inf] and np.inf/np.inf = nan
+    #   - Set the last element of y along U manually to 0
+    #   - ln(0) = -inf; Zeros come from theta and y. Reset to zero
+    #   - Photo-electron correction can result in negative phase space
+    #     density. log(-1) = nan
+    coeff = np.sqrt(2) * (eV2J*E0/mass)**(3/2) # m^3/s^3
+    y = (np.sqrt(f['U']) / (1 - f['U'])**(5/2)) * (np.sin(f['theta']))
+    y[:,-1,:] = 0
+    with np.errstate(divide='ignore'):
+        lnydy = np.log(y * np.sin(f['theta']) * dtheta * dphi)
+    lnydy = lnydy.where(np.isfinite(lnydy), 0)
+    
+    # Terms in that make up the velocity space entropy density
+    sv1 = 1e6 * N * np.log(1e6 * N) # 1/m^3 * ln(1/m^3)
+    sv2 = np.log(coeff) * N # 1/m^3 ln(m^3/s^3)
+    sv3 = s # J/K/m^3 ln(s^3/m^6) -- Already multiplied by -kB
+    
+    sv4 = (y * lnydy * f).integrate('phi')
+    sv4 = (np.sin(f['theta']) * sv4).integrate('theta')
+    sv4 = coeff * np.trapz(sv4, axis=sv4.get_axis_num('energy_index')) # 1/m^3
+    
+    # Velocity space entropy density
+    sv = kB * (sv1 - sv2 - sv4) + sv3 # J/K/m^3 * ln(...)
+    
+    return sv
