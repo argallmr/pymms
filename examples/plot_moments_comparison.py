@@ -1,5 +1,11 @@
+import util
+from pymms.data import fpi, edp
+from matplotlib import pyplot as plt
+from matplotlib import dates as mdates
+
+
 def compare_moments(sc, mode, species, start_date, end_date,
-                    scpot_correction=False):
+                    scpot_correction=False, ephoto_correction=False):
     '''
     Compare moments derived from the 3D velocity distribution functions
     from three sources: official FPI moments, derived herein, and those
@@ -18,6 +24,8 @@ def compare_moments(sc, mode, species, start_date, end_date,
         Start and end dates and times of the time interval
     scpot_correction : bool
         Apply spacecraft potential correction to the distribution functions.
+    ephoto : bool
+        Subtract photo-electrons. Applicable to DES data only.
     
     Returns
     -------
@@ -27,8 +35,9 @@ def compare_moments(sc, mode, species, start_date, end_date,
         List of `matplotlib.pyplot.axes` objects
     '''
     # Read the data
-    moms_xr = load_moms(sc, mode, species, start_date, end_date)
-    dist_xr = load_dist(sc, mode, species, start_date, end_date)
+    moms_xr = fpi.load_moms(sc, mode, species, start_date, end_date)
+    dist_xr = fpi.load_dist(sc, mode, species, start_date, end_date,
+                            ephoto=ephoto_correction)
     
     # Spacecraft potential correction
     scpot = None
@@ -37,38 +46,32 @@ def compare_moments(sc, mode, species, start_date, end_date,
         scpot = edp.load_scpot(sc, edp_mode, start_date, end_date)
         scpot = scpot.interp_like(moms_xr, method='nearest')
     
-    # Compute scalar temperature
-#    t_scalar = t_scalar.drop_vars(['cart_index_dim1', 'cart_index_dim2'])
-    
-    # Compute scalar pressure
-#    p_scalar = p_scalar.drop_vars(['cart_index_dim1', 'cart_index_dim2'])
-    
     # Create an equivalent Maxwellian distribution
-    max_xr = maxwellian_distribution(dist_xr,
-                                     moms_xr['density'],
-                                     moms_xr['velocity'],
-                                     moms_xr['t'])
+    max_xr = fpi.maxwellian_distribution(dist_xr,
+                                         moms_xr['density'],
+                                         moms_xr['velocity'],
+                                         moms_xr['t'])
     
     # Density
-    ni_xr = density(dist_xr, scpot=scpot)
-    ni_max_dist = density(max_xr, scpot=scpot)
+    ni_xr = fpi.density(dist_xr, scpot=scpot)
+    ni_max_dist = fpi.density(max_xr, scpot=scpot)
     
     # Entropy
-    s_xr = entropy(dist_xr, scpot=scpot)
-    s_max_dist = entropy(max_xr, scpot=scpot)
-    s_max = maxwellian_entropy(moms_xr['density'], moms_xr['p'])
+    s_xr = fpi.entropy(dist_xr, scpot=scpot)
+    s_max_dist = fpi.entropy(max_xr, scpot=scpot)
+    s_max = fpi.maxwellian_entropy(moms_xr['density'], moms_xr['p'])
     
     # Velocity
-    v_xr = velocity(dist_xr, N=ni_xr, scpot=scpot)
-    v_max_dist = velocity(max_xr, N=ni_max_dist, scpot=scpot)
+    v_xr = fpi.velocity(dist_xr, N=ni_xr, scpot=scpot)
+    v_max_dist = fpi.velocity(max_xr, N=ni_max_dist, scpot=scpot)
     
     # Temperature
-    T_xr = temperature(dist_xr, N=ni_xr, V=v_xr, scpot=scpot)
-    T_max_dist = temperature(max_xr, N=ni_max_dist, V=v_max_dist, scpot=scpot)
+    T_xr = fpi.temperature(dist_xr, N=ni_xr, V=v_xr, scpot=scpot)
+    T_max_dist = fpi.temperature(max_xr, N=ni_max_dist, V=v_max_dist, scpot=scpot)
     
     # Pressure
-    P_xr = pressure(dist_xr, N=ni_xr, T=T_xr)
-    P_max_dist = pressure(max_xr, N=ni_max_dist, T=T_max_dist)
+    P_xr = fpi.pressure(dist_xr, N=ni_xr, T=T_xr)
+    P_max_dist = fpi.pressure(max_xr, N=ni_max_dist, T=T_max_dist)
     
     # Scalar pressure
     p_scalar_xr = (P_xr[:,0,0] + P_xr[:,1,1] + P_xr[:,2,2]) / 3.0
@@ -78,7 +81,7 @@ def compare_moments(sc, mode, species, start_date, end_date,
     p_scalar_max_dist = p_scalar_max_dist.drop(['t_index_dim1', 't_index_dim2'])
     
     # Epsilon
-    e_xr = epsilon(dist_xr, dist_max=max_xr, N=ni_xr)
+    e_xr = fpi.epsilon(dist_xr, dist_max=max_xr, N=ni_xr)
     
     nrows = 6
     ncols = 3
@@ -86,7 +89,39 @@ def compare_moments(sc, mode, species, start_date, end_date,
     fig, axes = plt.subplots(nrows=nrows, ncols=ncols,
                              figsize=figsize, squeeze=False)
     
+    '''
+    locator = mdates.AutoDateLocator()
+    formatter = mdates.ConciseDateFormatter(locator)
+    
+    ax.xaxis.set_major_locator(locator)
+    ax.xaxis.set_major_formatter(formatter)
+    for tick in ax.get_xticklabels():
+        tick.set_rotation(45)
+    
     # Denisty
+    ax = axes[0,0]
+    lines = []
+    moms_xr['density'].plot(ax=ax, label='moms')
+    ni_xr.plot(ax=ax, label='dist')
+    ni_max_dist.plot(ax=ax, label='max')
+    ax.set_xlabel('')
+    ax.set_xticklabels([])
+    ax.set_ylabel='N\n($cm^{-3}$)'
+    
+    # Create the legend outside the right-most axes
+    leg = ax.legend(bbox_to_anchor=(1.05, 1),
+                    borderaxespad=0.0,
+                    frameon=False,
+                    handlelength=0,
+                    handletextpad=0,
+                    loc='upper left')
+    
+    # Color the text the same as the lines
+    for line, text in zip(lines, leg.get_texts()):
+        text.set_color(line.get_color())
+    '''
+    
+    # Density
     ax = axes[0,0]
     moms_xr['density'].attrs['label'] = 'moms'
     ni_xr.attrs['label'] = 'dist'
@@ -237,10 +272,13 @@ def compare_moments(sc, mode, species, start_date, end_date,
 
 if __name__ == '__main__':
     import argparse
+    from os import path
+    import datetime as dt
     
-    parser_short = argparse.ArgumentParser(
-    	description='Plot parameters associated with kinetic entropy.'
-    	)
+    # Define acceptable parameters
+    parser = argparse.ArgumentParser(
+        description='Plot parameters associated with kinetic entropy.'
+        )
     
     parser.add_argument('sc', 
                         type=str,
@@ -266,11 +304,66 @@ if __name__ == '__main__':
                         help='Start date of the data interval: '
                              '"YYYY-MM-DDTHH:MM:SS""'
                         )
+                        
+    parser.add_argument('-V', '--scpot',
+                        help='Spacecraft potential correction',
+                        action='store_true'
+                        )
+                        
+    parser.add_argument('-P', '--ephoto',
+                        help='Photo-electron correction',
+                        action='store_true'
+                        )
+                        
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument('-d', '--dir',
+                       type=str,
+                       help='Path to output destination',
+                       )
+                        
+    group.add_argument('-f', '--filename',
+                       type=str,
+                       help='Output file name',
+                       )
+                        
+    parser.add_argument('-n', '--no-show',
+                        help='Do not show the plot.',
+                        action='store_true')
 
+    # Gather input arguments
     args = parser.parse_args()
-    t0 = dt.datetime.strftime(args.start_date, '%Y-%m-%dT%H:%M:%S')
-    t1 = dt.datetime.strftime(args.end_date, '%Y-%m-%dT%H:%M:%S')
+    t0 = dt.datetime.strptime(args.start_date, '%Y-%m-%dT%H:%M:%S')
+    t1 = dt.datetime.strptime(args.end_date, '%Y-%m-%dT%H:%M:%S')
     
-    fig, axes = plot_entropy(args.sc, args.mode, args.species, t0, t1)
-
-    plt.show()
+    # Generate the figure
+    fig, axes = compare_moments(args.sc, args.mode, args.species, t0, t1,
+                                scpot_correction=args.scpot,
+                                ephoto_correction=args.ephoto)
+    
+    # Save to directory
+    if args.dir is not None:
+        optdesc = 'moms'
+        if args.scpot:
+            optdesc += '-Vsc'
+        if args.ephoto:
+            optdesc += '-ephoto'
+        
+        if t0.date() == t1.date():
+            fname = '_'.join((args.sc, 'd'+args.species+'s', args.mode, 'l2',
+                              optdesc,
+                              t0.strftime('%Y%m%d'), t0.strftime('%H%M%S'),
+                              t1.strftime('%H%M%S')))
+        else:
+            fname = '_'.join((args.sc, 'd'+args.species+'s', args.mode, 'l2',
+                              optdesc,
+                              t0.strftime('%Y%m%d'), t0.strftime('%H%M%S'),
+                              t1.strftime('%Y%m%d'), t1.strftime('%H%M%S')))
+        plt.savefig(path.join(args.dir, fname + '.png'))
+    
+    # Save to file
+    if args.filename is not None:
+        plt.savefig(args.filename)
+    
+    # Show on screen
+    if not args.no_show:
+        plt.show()
