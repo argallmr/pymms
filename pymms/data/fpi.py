@@ -1035,26 +1035,29 @@ def precondition(dist, E0=100, E_low=10, scpot=None,
     
     # Adjust for spacecraft potential
     #   - E' = E +- q*Vsc, where + is for ions and - is for electrons
+    #   - Make a copy of energy so that the original dest['energy']
+    #     does not change
+    energy = f_out['energy'].copy()
     if scpot is not None:
 #        sign = -1 if dist.attrs['species'] == 'e' else 1
         sign = -1
-        f_out['energy'] += (sign * J2eV * e * scpot['Vsc'])
+        energy += (sign * J2eV * e * scpot['Vsc'])
     
     # Low energy integration limit
     #   - Exclude data below the low-energy limit
     #   - xr.DataArray.integrate does not avoid NaNs
     #   - Fill with 0.0 because at front of array and trapezoidal integration
     #     results in zero area.
-    mask = f_out['energy'] >= E_low
-    energy = f_out['energy'].where(mask, 0.0)
+    mask = energy >= E_low
+    energy = energy.where(mask, 0.0)
     f_out = f_out.where(mask, 0.0)
     f_out = f_out.assign_coords({'energy': energy})
     
     # Exclude measurements from below the spacecraft potential
     #   - Same reasoning as for low-energy integration limit
     if scpot is not None:
-        mask = f_out['energy'] >= 0
-        energy = f_out['energy'].where(mask, 0.0)
+        mask = energy >= 0
+        energy = energy.where(mask, 0.0)
         f_out = f_out.where(mask, 0.0)
         f_out = f_out.assign_coords({'energy': energy})
     
