@@ -242,6 +242,9 @@ def cdf_to_ds(filename, variables=None, varformat=None, data_vars=True):
     ds : `xarray.Dataset`
         The data.
     '''
+    global cdf_vars_read
+    cdf_vars_read = {}
+    
     if not isinstance(filename, str):
         raise ValueError('cdf_file must be a string or path.')
     if isinstance(variables, str):
@@ -271,6 +274,7 @@ def cdf_to_ds(filename, variables=None, varformat=None, data_vars=True):
     variables = []
     for varname in varnames:
         ds = ds.assign({varname: cdf_load_var(cdf, varname)})
+    cdf.close()
     
     # Grab the global attributes from the data file
     ds.attrs['filename'] = filename
@@ -295,20 +299,31 @@ def cdf_load_var(cdf, varname):
     da : `xarray.DataArray`
         The data with metadata
     '''
+    global cdf_vars_read
     
     time_types = ('CDF_EPOCH', 'CDF_EPOCH16', 'CDF_TIME_TT2000')
     tepoch = epochs.CDFepoch()
     varinq = cdf.varinq(varname)
-
-    # Convert epochs to datetimes
-    #   - None is returned if tstart and tend are outside data interval
-    data = cdf.varget(variable=varname)
-    if varinq['Data_Type_Description'] in time_types:
-        try:
-            data = np.asarray([np.datetime64(t)
-                               for t in tepoch.to_datetime(data)])
-        except TypeError:
-            pass
+    
+    # Some variables have circular references. For example, the Epoch
+    # variable has a variable attribute DELTA_PLUS_VAR that points to
+    # to the Delta_Plus variable. The Delta_Plus variable has a DEPEND_0
+    # attribute that points back to the Epoch variable. To prevent an
+    # infinite loop, short circuit if a variable has already been read.
+    try:
+        return cdf_vars_read[varname]
+    except KeyError:
+        data = cdf.varget(variable=varname)
+        
+        # Convert epochs to datetimes
+        if varinq['Data_Type_Description'] in time_types:
+            try:
+                data = np.asarray([np.datetime64(t)
+                                   for t in tepoch.to_datetime(data)])
+        
+            # None is returned if tstart and tend are outside data interval
+            except TypeError:
+                pass
     
     # Get dependent variables first because multi-dimensional
     # dependent variables (e.g. those with record variance)
@@ -341,18 +356,16 @@ def cdf_load_var(cdf, varname):
             except KeyError:
                 try:
                     dim_name = varatts['LABLAXIS']
+                
+                # If dimensions are not given names, they are automatically
+                # named dim_N. To make them more descriptive, name them with
+                # the variable name.
                 except KeyError:
                     dim_name = varname
-                
-#                 if dim == 0:
-#                     pass
-#                 elif dim == 1:
-#                     print(varname)
-#                     dim_name = varatts['LABLAXIS']
-#                 else: 
-#                     raise ValueError('Unknown coordinates for '
-#                                      'dimension {}'.format(dim))
         
+        # This happens, for example, when data is 1D with 0 records. I.e.
+        # it has no DEPEND_ or LABL_PTR_ attributes. Thus, it has no
+        # dimensions or coordinates and we can move on.
         if dim_name == varname:
             continue
         
@@ -370,8 +383,6 @@ def cdf_load_var(cdf, varname):
         # CDF file. Read the data from those variables as the coordinate
         # values for this dimension.
         if dim_name in cdf.cdf_info()['zVariables']:
-#            coords[coord_name] = cdf_load_var(cdf, dim_name)
-            
             
             coord_data = cdf_load_var(cdf, dim_name)
             if len(coord_data.shape) == 1:
@@ -401,6 +412,9 @@ def cdf_load_var(cdf, varname):
     da = xr.DataArray(data,
                       dims=dims,
                       coords=coords)
+    
+    # Indicate that the variable has been read.
+    cdf_vars_read[varname] = da
     
     # Create the variable
     da.name = varname
@@ -471,20 +485,15 @@ def cdf_attget(cdf, da):
         if attrname.startswith(('DEPEND_', 'LABL_PTR_')):
             continue
         
-        '''
-        This is commented out for now because the DELTA_PLUS_VAR
-        for Epoch variable can have a DEPEND_0 attribute that
-        points back to Epoch, resulting in an infinite loop.
-        
-        # Some attribute values point to other variables
-        if (isinstance(attrvalue, str)
+        # Some attribute values point to:
+        #   - Other variables. Go grab that data
+        #   - The variable. Not good - creates infinite loops
+        #     (e.g. LABLAXIS = variable name)
+        if (isinstance(attrvalue, str) and (attrvalue != da.name)
             and (attrvalue in cdf_varnames)
             ):
             
-            import pdb
-            pdb.set_trace()
-            attrvalue = cdf_load_var(cdf, ds, attrvalue)
-        '''
+            attrvalue = cdf_load_var(cdf, attrvalue)
         
         # Rename particular attributes
         if attrname == 'DELTA_PLUS_VAR':
@@ -516,7 +525,7 @@ def rename_df_cols(df, old_col, new_cols):
     df.rename(columns={'{}_{}'.format(old_col, idx): new_col_name
                        for idx, new_col_name in enumerate(new_cols)},
               inplace=True
-             )
+              )
 
 
 def load_data(sc='mms1', instr='fgm', mode='srvy', level='l2',
