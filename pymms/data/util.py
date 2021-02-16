@@ -271,11 +271,12 @@ def cdf_to_ds(filename, variables=None, varformat=None, data_vars=True):
         varnames = cdf_varnames(cdf, data_vars=data_vars)
     
     # Read the data
-    ds = xr.Dataset()
-    variables = []
     for varname in varnames:
-        ds = ds.assign({varname: cdf_load_var(cdf, varname)})
+        cdf_load_var(cdf, varname)
     cdf.close()
+    
+    # Create the dataset
+    ds = xr.Dataset(cdf_vars_read)
     
     # Grab the global attributes from the data file
     ds.attrs['filename'] = filename
@@ -297,8 +298,8 @@ def cdf_load_var(cdf, varname):
     
     Returns
     -------
-    da : `xarray.DataArray`
-        The data with metadata
+    data : dict
+        Variables read from file
     '''
     global cdf_vars_read
     
@@ -311,20 +312,66 @@ def cdf_load_var(cdf, varname):
     # to the Delta_Plus variable. The Delta_Plus variable has a DEPEND_0
     # attribute that points back to the Epoch variable. To prevent an
     # infinite loop, short circuit if a variable has already been read.
-    try:
-        return cdf_vars_read[varname]
-    except KeyError:
-        data = cdf.varget(variable=varname)
-        
-        # Convert epochs to datetimes
-        if varinq['Data_Type_Description'] in time_types:
-            try:
-                data = np.asarray([np.datetime64(t)
-                                   for t in tepoch.to_datetime(data)])
-        
-            # None is returned if tstart and tend are outside data interval
-            except TypeError:
-                pass
+    if varname in cdf_vars_read:
+        return
+
+    # Read the variable data
+    data = cdf.varget(variable=varname)
+    
+    # Convert epochs to datetimes
+    if varinq['Data_Type_Description'] in time_types:
+        try:
+            data = np.asarray([np.datetime64(t)
+                               for t in tepoch.to_datetime(data)])
+    
+        # None is returned if tstart and tend are outside data interval
+        except TypeError:
+            pass
+    
+    # If the variable is not record varying, the "records" dimension
+    # will be shallow and need to be removed so that data has the
+    # same number of dimensions as dims has elements.
+    if not varinq['Rec_Vary']:
+        data = data.squeeze()
+    
+    dims, coords = cdf_var_dims(cdf, varname, len(data.shape))
+    
+    da = xr.DataArray(data,
+                      dims=dims,
+                      coords=coords)
+    
+    # Indicate that the variable has been read.
+    cdf_vars_read[varname] = da
+    
+    # Create the variable
+    da.name = varname
+    da.attrs['rec_vary'] = varinq['Rec_Vary']
+    da.attrs['cdf_name'] = varinq['Variable']
+    da.attrs['cdf_type'] = varinq['Data_Type_Description']
+    
+    # Read the metadata
+    cdf_attget(cdf, da)
+
+
+def cdf_var_dims(cdf, varname, ndims):
+    '''
+    Get the names and number of dimensions of a CDF variable by
+    checking how many DEPEND_# variable attributes it has (# is a
+    number ranging from 0 to 3).
+    
+    Parameters
+    ----------
+    cdf : `cdfread.CDF`
+        The CDF file object
+    da : `xarray.DataArray`
+        The variable data and metadata
+    
+    Returns
+    -------
+    dims : list
+        Names of the dependent variable dimensions
+    '''
+    global cdf_vars_read
     
     # Get dependent variables first because multi-dimensional
     # dependent variables (e.g. those with record variance)
@@ -333,7 +380,7 @@ def cdf_load_var(cdf, varname):
     coords = {}
     dims = []
     varatts = cdf.varattsget(varname)
-    for dim in range(len(data.shape)):
+    for dim in range(ndims):
         
         dim_name = None
         try:
@@ -385,7 +432,8 @@ def cdf_load_var(cdf, varname):
         # values for this dimension.
         if dim_name in cdf.cdf_info()['zVariables']:
             
-            coord_data = cdf_load_var(cdf, dim_name)
+            cdf_load_var(cdf, dim_name)
+            coord_data = cdf_vars_read[dim_name]
             if len(coord_data.shape) == 1:
                 dim_name = coord_name
             elif len(coord_data.shape) == 2:
@@ -400,64 +448,11 @@ def cdf_load_var(cdf, varname):
         elif dim > 0:
             dims.append(dim_name)
     
-    # If the variable is not record varying, the "records" dimension
-    # will be shallow and need to be removed so that data has the
-    # same number of dimensions as dims has elements.
-    if not varinq['Rec_Vary']:
-        data = data.squeeze()
-    
     # Unlike coords, dims cannot be empty.
     if len(coords) == 0:
         dims.append(varname)
     
-    da = xr.DataArray(data,
-                      dims=dims,
-                      coords=coords)
-    
-    # Indicate that the variable has been read.
-    cdf_vars_read[varname] = da
-    
-    # Create the variable
-    da.name = varname
-    da.attrs['rec_vary'] = varinq['Rec_Vary']
-    da.attrs['cdf_name'] = varinq['Variable']
-    da.attrs['cdf_type'] = varinq['Data_Type_Description']
-    
-    # Read the metadata
-    cdf_attget(cdf, da)
-    
-    return da
-
-
-def cdf_get_dims(cdf, da):
-    '''
-    Get the names and number of dimensions of a CDF variable by
-    checking how many DEPEND_# variable attributes it has (# is a
-    number ranging from 0 to 3).
-    
-    Parameters
-    ----------
-    cdf : `cdfread.CDF`
-        The CDF file object
-    da : `xarray.DataArray`
-        The variable data and metadata
-    
-    Returns
-    -------
-    dims : list
-        Names of the dependent variable dimensions
-    '''
-    
-    dims = []
-    varatts = cdf.varattsget(da.cdf_name)
-    for dep in range(4):
-        try:
-            attrvalue = varatts['DEPEND_{0}'.format(dep)]
-            dims.append(attrvalue)
-        except AttributeError:
-            break
-    
-    return dims
+    return dims, coords
 
 
 def cdf_attget(cdf, da):
@@ -472,6 +467,7 @@ def cdf_attget(cdf, da):
     da : `xarray.DataArray`
         The variable data and metadata. da.attrs is edited in-place.
     '''
+    
     # Get variable attributes for given variable
     varatts = cdf.varattsget(da.attrs['cdf_name'])
 
@@ -494,7 +490,7 @@ def cdf_attget(cdf, da):
             and (attrvalue in cdf_varnames)
             ):
             
-            attrvalue = cdf_load_var(cdf, attrvalue)
+            cdf_load_var(cdf, attrvalue)
         
         # Rename particular attributes
         if attrname == 'DELTA_PLUS_VAR':
@@ -562,8 +558,10 @@ def load_data(sc='mms1', instr='fgm', mode='srvy', level='l2',
     
     Returns
     -------
-    data : `xarray.DataArray`
-        The requested data.
+    data : `xarray.DataArray` or list
+        The requested data. If data from all files can be concatenated
+        successfully, a Dataset is returned. If not, a list of Datasets
+        is returned, where each dataset is the data from a single file.
     """
     if start_date is None:
         start_date = np.datetime64('2015-10-16T13:06:04')
@@ -586,7 +584,10 @@ def load_data(sc='mms1', instr='fgm', mode='srvy', level='l2',
     sdc.site = site
     
     files = sdc.download_files()
-    files = api.sort_files(files)[0]
+    try:
+        files = api.sort_files(files)[0]
+    except IndexError:
+        raise IndexError('No files found: {0}'.format(sdc))
     
     # Concatenate data along the records (time) dimension, which
     # should be equivalent to the DEPEND_0 variable name of the
@@ -604,7 +605,10 @@ def load_data(sc='mms1', instr='fgm', mode='srvy', level='l2',
     else:
         rec_vname = record_dim
     
-    data = xr.concat(data, dim=rec_vname)
+    try:
+        data = xr.concat(data, dim=rec_vname)
+    except Exception as E:
+        return data
     data = data.sel({rec_vname: slice(start_date, end_date)})
     
     # Keep information about the data
