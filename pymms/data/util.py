@@ -255,10 +255,11 @@ def cdf_to_ds(filename, variables=None, varformat=None, data_vars=True):
     # Open the CDF file
     cdf = cdfread.CDF(filename)
     
-    # Match regular expression(s)
+    # Read the given variables
     if variables is not None:
         varnames = variables
     
+    # Match regular expression(s)
     elif varformat is not None:
         all_variables = cdf_varnames(cdf, data_vars=data_vars)
         varnames = []
@@ -533,7 +534,7 @@ def load_data(sc='mms1', instr='fgm', mode='srvy', level='l2',
               offline=False, record_dim='Epoch', team_site=False,
               **kwargs):
     """
-    Load FPI distribution function data.
+    Load MMS data.
     
     Parameters
     ----------
@@ -578,8 +579,12 @@ def load_data(sc='mms1', instr='fgm', mode='srvy', level='l2',
                             optdesc=optdesc,
                             start_date=start_date,
                             end_date=end_date,
-                            offline=offline,
-                            site=site)
+                            offline=offline)
+    
+    # The data level parameter will automatically set the site keyword.
+    # If the user specifies the site, set it after instantiation.
+    sdc.site = site
+    
     files = sdc.download_files()
     files = api.sort_files(files)[0]
     

@@ -1,5 +1,5 @@
 from pymms.sdc import mrmms_sdc_api as api
-from . import util
+from pymms.data import util
 import datetime as dt
 import xarray as xr
 
@@ -50,8 +50,8 @@ def check_coords(coords, instr='fgm', level='l2'):
 
 
 def load_data(sc, mode, start_date, end_date,
-              instr='fgm', level='l2', coords='gse',
-              pd=False):
+              level='l2', coords='gse',
+              pd=False, **kwargs):
     """
     Load FPI distribution function data.
     
@@ -74,39 +74,41 @@ def load_data(sc, mode, start_date, end_date,
     # Check the inputs
     check_spacecraft(sc)
     mode = check_mode(mode)
-    check_level(level, instr=instr)
+    check_level(level, instr='fgm')
     check_coords(coords)
     
     # File and variable name parameters
     t_vname = 'Epoch'
-    b_vname = '_'.join((sc, instr, 'b', coords, mode, level))
+    b_vname = '_'.join((sc, 'fgm', 'b', coords, mode, level))
     b_labl_vname = '_'.join(('label', 'b', coords))
-    
-    # Download the data
-    sdc = api.MrMMS_SDC_API(sc, instr, mode, level,
-                            start_date=start_date,
-                            end_date=end_date)
-    fgm_files = sdc.download_files()
-    fgm_files = api.sort_files(fgm_files)[0]
     
     # Read the data from files
     if pd:
+    
+        # Download the data
+        sdc = api.MrMMS_SDC_API(sc, 'fgm', mode, level,
+                                start_date=start_date,
+                                end_date=end_date)
+        fgm_files = sdc.download_files()
+        fgm_files = api.sort_files(fgm_files)[0]
+    
         fgm_data = util.cdf_to_df(fgm_files, b_vname)
         util.rename_df_cols(fgm_data, b_vname, ('Bx', 'By', 'Bz', '|B|'))
     else:
-        # Concatenate data along the records (time) dimension, which
-        # should be equivalent to the DEPEND_0 variable name of the
-        # magnetic field variable.
-        fgm_data = []
-        for file in fgm_files:
-            fgm_data.append(util.cdf_to_ds(file, b_vname))
-        fgm_data = xr.concat(fgm_data, dim=fgm_data[0][b_vname].dims[0])
+    
+        # Load the data
+        #   - R is concatenated along Epoch, but depends on Epoch_state
+        fgm_data = util.load_data(sc=sc, instr='fgm', mode=mode, level=level,
+                                  start_date=start_date, end_date=end_date, 
+                                  **kwargs)
         
-        fgm_data = fgm_data.rename({t_vname: 'time',
-                                    b_vname: 'B',
-                                    b_labl_vname: 'B_index'})
-        fgm_data = fgm_data.assign_coords(B_index=['Bx', 'By', 'Bz', '|B|'])
-        fgm_data = fgm_data.sel(time=slice(start_date, end_date))
+        # Rename variables
+        names = {t_vname: 'time',
+                 b_vname: 'B_' + coords.upper(),
+                 b_labl_vname: 'b_index'}
+
+        names = {key:val for key, val in names.items() if key in fgm_data}
+        fgm_data = fgm_data.rename(names)
         
     return fgm_data
 
