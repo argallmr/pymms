@@ -330,6 +330,35 @@ class ePhoto_Downloader(util.Downloader):
         self._starttime = np.datetime64(endtime, 's')
     
 
+
+def center_timestamps(fpi_data):
+    '''
+    FPI time stamps are at the beginning of the sampling interval.
+    Adjust the timestamp to the center of the interval.
+    
+    Parameters
+    ----------
+    fpi_data : `xarray.Dataset`
+        Dataset containing the time coordinates to be centered
+    
+    Returns
+    -------
+    new_data : `xarray.Dataset`
+        A new dataset with the time coordinates centered
+    '''
+    
+    t_delta = np.timedelta64(int(1e9 * (fpi_data['Epoch_plus_var'].data
+                                        + fpi_data['Epoch_minus_var'].data)
+                                 / 2.0), 'ns')
+    
+    data = fpi_data.assign_coords({'time': fpi_data['time'] + t_delta})
+    data['time'].attrs = fpi_data['attrs']
+    data['Epoch_plus_var'] = t_delta
+    data['Epoch_minus_var'] = t_delta
+    
+    return data
+
+
 def check_spacecraft(sc):
     '''
     Check that a valid spacecraft ID was given.
@@ -714,6 +743,9 @@ def load_moms(sc, mode, species, start_date, end_date):
                                   + fpi_data['prestensor'][:,2,2]
                                   ) / 3.0
                                )
+    
+    # Adjust the time stamp
+    fpi_data = center_timestamps(fpi_data)
     
     for name, value in fpi_data.items():
         value.attrs['sc'] = sc

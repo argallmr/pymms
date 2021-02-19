@@ -102,13 +102,54 @@ def load_data(sc, mode, start_date, end_date,
                                   start_date=start_date, end_date=end_date, 
                                   **kwargs)
         
+        tr_vname = 'Epoch_state'
+        t_delta_vname = '_'.join((sc, 'fgm', 'bdeltahalf', mode, level))
+        tr_delta_vname = '_'.join((sc, 'fgm', 'rdeltahalf', mode, level))
+        
+        r_gse_vname = '_'.join((sc, 'fgm', 'r', 'gse', mode, level))
+        r_gsm_vname = '_'.join((sc, 'fgm', 'r', 'gsm', mode, level))
+        
+        r_gse_labl_vname = '_'.join(('label', 'r', 'gse'))
+        r_gsm_labl_vname = '_'.join(('label', 'r', 'gsm'))
+        repr_vname = '_'.join(('represent', 'vec', 'tot'))
+        
+        b_dmpa_vname = '_'.join((sc, 'fgm', 'b', 'dmpa', mode, level))
+        b_bcs_vname = '_'.join((sc, 'fgm', 'b', 'bcs', mode, level))
+        b_gse_vname = '_'.join((sc, 'fgm', 'b', 'gse', mode, level))
+        b_gsm_vname = '_'.join((sc, 'fgm', 'b', 'gsm', mode, level))
+        
+        b_dmpa_lbl_vname = '_'.join(('label', 'b', 'dmpa'))
+        b_bcs_lbl_vname = '_'.join(('label', 'b', 'bcs'))
+        b_gse_lbl_vname = '_'.join(('label', 'b', 'gse'))
+        b_gsm_lbl_vname = '_'.join(('label', 'b', 'gsm'))
+        
+        labels = [b_dmpa_lbl_vname, b_bcs_lbl_vname, b_gse_lbl_vname,
+                  b_gsm_lbl_vname, r_gse_labl_vname, r_gsm_labl_vname]
+        
         # Rename variables
         names = {t_vname: 'time',
-                 b_vname: 'B_' + coords.upper(),
-                 b_labl_vname: 'b_index'}
+                 tr_vname: 'time_r',
+                 t_delta_vname: 'time_delta',
+                 tr_delta_vname: 'time_r_delta',
+                 b_dmpa_vname: 'B_DMPA',
+                 b_bcs_vname: 'B_BCS',
+                 b_gse_vname: 'B_GSE',
+                 b_gsm_vname: 'B_GSM',
+                 r_gse_vname: 'r_GSE',
+                 r_gsm_vname: 'r_GSM'}
 
         names = {key:val for key, val in names.items() if key in fgm_data}
         fgm_data = fgm_data.rename(names)
+        
+        # Standardize labels
+        labels = [label for label in labels if label in fgm_data]
+        new_labels = {key: ('r_index' if key.startswith('label_r') else 'b_index')
+                      for key in labels}
+        fgm_data = (fgm_data.assign_coords({'b_index': ['x', 'y', 'z', 't'],
+                                            'r_index': ['x', 'y', 'z']})
+                            .drop(labels + [repr_vname,])
+                            .rename(new_labels)
+                    )
         
     return fgm_data
 

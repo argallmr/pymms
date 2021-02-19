@@ -43,6 +43,9 @@ def load_data(sc='mms1', mode='brst', level='l3', optdesc='8khz',
             data[idx] = (ds.assign_coords({t_delta_vname: ds['Epoch']})
                            .reset_coords(t_delta_vname))
         
+        # Concatenate the dat
+        data = xr.concat(data, dim='Epoch')
+        
         # Add attributes about the data request
         data.attrs['sc'] = sc
         data.attrs['instr'] = 'fsm'
@@ -52,14 +55,17 @@ def load_data(sc='mms1', mode='brst', level='l3', optdesc='8khz',
     
     # Rename data variables to something simpler
     if optdesc == '8khz':
+        t_delta_vname = '_'.join((sc, 'fsm', 'epoch', 'delta', mode, level))
         b_gse_vname = '_'.join((sc, 'fsm', 'b', 'gse', mode, level))
         b_mag_vname = '_'.join((sc, 'fsm', 'b', 'mag', mode, level))
         r_gse_vname = '_'.join((sc, 'fsm', 'r', 'gse', mode, level))
         b_labl_vname = '_'.join((sc, 'fsm', 'b', 'gse', 'labls', mode, level))
         r_labl_vname = 'label_r_gse'
-
+        repr_vname = 'represent_vec_tot'
+        
         names = {'Epoch': 'time',
                  'Epoch_state': 'time_r',
+                 t_delta_vname: 'time_delta',
                  b_gse_vname: 'B_GSE',
                  b_mag_vname: '|B|',
                  r_gse_vname: 'R_GSE',
@@ -67,6 +73,10 @@ def load_data(sc='mms1', mode='brst', level='l3', optdesc='8khz',
                  r_labl_vname: 'r_index'}
 
         names = {key:val for key, val in names.items() if key in data}
-        data = data.rename(names)
+        data = (data.assign_coords({'b_index': ['x', 'y', 'z'],
+                                    'r_index': ['x', 'y', 'z', '|r|']})
+                    .drop([b_labl_vname, r_labl_vname, repr_vname], errors='ignore')
+                    .rename(names)
+                )
     
     return data
