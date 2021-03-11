@@ -33,57 +33,57 @@ def fsm_timeseries(sc, start_date, end_date):
 
     # Bx
     ax = axes[0,0]
-    ax = util.plot([fsm_data['B_GSE'].loc[:,'x'],
-                    fgm_data['B_GSE'].loc[:,'x']],
+    ax = util.plot([fgm_data['B_GSE'].loc[:,'x'],
+                    fsm_data['B_GSE'].loc[:,'x']],
                    ax=ax, labels=['FGM', 'FSM'],
                    xaxis='off', ylabel='Bx\n(nT)'
                    )
 
     # By
     ax = axes[1,0]
-    ax = util.plot([fsm_data['B_GSE'].loc[:,'z'],
-                    fgm_data['B_GSE'].loc[:,'z']],
+    ax = util.plot([fgm_data['B_GSE'].loc[:,'z'],
+                    fsm_data['B_GSE'].loc[:,'z']],
                    ax=ax, labels=['FGM', 'FSM'],
                    xaxis='off', ylabel='By\n(nT)'
                    )
 
     # Bz
     ax = axes[2,0]
-    ax = util.plot([fsm_data['B_GSE'].loc[:,'z'],
-                    fgm_data['B_GSE'].loc[:,'z']],
+    ax = util.plot([fgm_data['B_GSE'].loc[:,'z'],
+                    fsm_data['B_GSE'].loc[:,'z']],
                    ax=ax, labels=['FGM', 'FSM'],
                    xaxis='off', ylabel='Bz\n(nT)'
                    )
 
     # |B|
     ax = axes[3,0]
-    ax = util.plot([fsm_data['|B|'],
-                    fgm_data['B_GSE'].loc[:,'t']],
+    ax = util.plot([fgm_data['|B|'],
+                    fsm_data['B_GSE'].loc[:,'t']],
                    ax=ax, labels=['FGM', 'FSM'],
                    ylabel='|B|\n(nT)'
                    )
 
     # dBx
     ax = axes[0,1]
-    ax = util.plot([fsm_data['dB_GSE'].loc[:,'x'],
-                    scm_data['B_GSE'].loc[:,'x']],
-                   ax=ax, labels=['FSM', 'SCM'],
+    ax = util.plot([scm_data['dB_GSE'].loc[:,'x'],
+                    fsm_data['B_GSE'].loc[:,'x']],
+                   ax=ax, labels=['SCM', 'FSM'],
                    xaxis='off', ylabel='$\delta$Bx\n(nT)'
                    )
 
     # dBy
     ax = axes[1,1]
-    ax = util.plot([fsm_data['dB_GSE'].loc[:,'y'],
-                    scm_data['B_GSE'].loc[:,'y']],
-                   ax=ax, labels=['FSM', 'SCM'],
+    ax = util.plot([scm_data['dB_GSE'].loc[:,'y'],
+                    fsm_data['B_GSE'].loc[:,'y']],
+                   ax=ax, labels=['SCM', 'FSM'],
                    xaxis='off', ylabel='$\delta$By\n(nT)'
                    )
 
     # dBz
     ax = axes[2,1]
-    ax = util.plot([fsm_data['dB_GSE'].loc[:,'z'],
-                    scm_data['B_GSE'].loc[:,'z']],
-                   ax=ax, labels=['FSM', 'SCM'],
+    ax = util.plot([scm_data['dB_GSE'].loc[:,'z'],
+                    fsm_data['B_GSE'].loc[:,'z']],
+                   ax=ax, labels=['SCM', 'FSM'],
                    ylabel='$\delta$Bz\n(nT)'
                    )
     
@@ -101,6 +101,7 @@ def fsm_timeseries(sc, start_date, end_date):
 if __name__ == '__main__':
     import argparse
     import datetime as dt
+    from os import path
     
     parser = argparse.ArgumentParser(
         description='Compare FGM, SCM, and FSM timeseries.'
