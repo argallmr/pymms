@@ -1,5 +1,5 @@
 from pymms.sdc import mrmms_sdc_api as api
-from . import fgm, edp
+from pymms.data import fgm, edp
 import datetime as dt
 import numpy as np
 import xarray as xr
@@ -761,94 +761,6 @@ def load_moms(sc='mms1', mode='fast', level='l2', optdesc='dis-moms',
         value.attrs['species'] = optdesc[1]
     
     return data
-
-
-def load_moms_pd(sc, mode, species, start_date, end_date):
-    """
-    Load FPI moments as a Pandas DataFrame.
-    
-    Parameters
-    ----------
-    sc : str
-        Spacecraft ID: ('mms1', 'mms2', 'mms3', 'mms4')
-    mode : str
-        Instrument mode: ('fast', 'brst'). If 'srvy' is given, it is
-        automatically changed to 'fast'.
-    species : str
-        Particle species: ('i', 'e') for ions and electrons, respectively.
-    start_date, end_date : `datetime.datetime`
-        Start and end of the data interval.
-    
-    Returns
-    -------
-    moms : `pandas.DataFrame`
-        Moments of the distribution function.
-    """
-    
-    # Check the inputs
-    check_spacecraft(sc)
-    mode = check_mode(mode)
-    check_species(species)
-    
-    # File and variable name parameters
-    instr = 'd{0}s'.format(species)
-    optdesc = instr+'-moms'
-    n_vname = '_'.join((sc, instr, 'numberdensity', mode))
-    v_vname = '_'.join((sc, instr, 'bulkv', 'dbcs', mode))
-    p_vname = '_'.join((sc, instr, 'prestensor', 'dbcs', mode))
-    t_vname = '_'.join((sc, instr, 'temptensor', 'dbcs', mode))
-    q_vname = '_'.join((sc, instr, 'heatq', 'dbcs', mode))
-    t_para_vname = '_'.join((sc, instr, 'temppara', mode))
-    t_perp_vname = '_'.join((sc, instr, 'tempperp', mode))
-    varnames = [n_vname, v_vname, p_vname, t_vname, q_vname,
-                t_para_vname, t_perp_vname]
-    
-    # Download the data
-    sdc = api.MrMMS_SDC_API(sc, 'fpi', mode, 'l2',
-                            optdesc=optdesc,
-                            start_date=start_date,
-                            end_date=end_date)
-    fpi_files = sdc.download_files()
-    fpi_files = api.sort_files(fpi_files)[0]
-    
-    # Read the data from files
-    fpi_df = util.cdf_to_df(fpi_files, varnames)
-    
-    # Calculate Maxwellian Entropy
-    if maxwell_entropy:
-        data.append(mexwellian_entropy(data[0]))
-    
-    # Rename columns
-    fpi_df.rename(columns={n_vname: 'N'}, inplace=True)
-    fpi_df.rename(columns={t_para_vname: 'T_para'}, inplace=True)
-    fpi_df.rename(columns={t_perp_vname: 'T_perp'}, inplace=True)
-    util.rename_df_cols(fpi_df, v_vname, ('Vx', 'Vy', 'Vz'))
-    util.rename_df_cols(fpi_df, q_vname, ('Q_xx', 'Q_yy', 'Q_zz'))
-    util.rename_df_cols(fpi_df, t_vname,
-                        ('T_xx', 'T_xy', 'T_xz',
-                         'T_yx', 'T_yy', 'T_yz',
-                         'T_zx', 'T_zy', 'T_zz'
-                         ))
-    util.rename_df_cols(fpi_df, p_vname,
-                        ('P_xx', 'P_xy', 'P_xz',
-                         'P_yx', 'P_yy', 'P_yz',
-                         'P_zx', 'P_zy', 'P_zz'
-                         ))
-
-    # Drop redundant components of the pressure and temperature tensors
-    fpi_df.drop(columns=['T_yx', 'T_zx', 'T_zy',
-                         'P_yx', 'P_zx', 'P_zy'],
-                inplace=True
-                )
-    
-    # Scalar temperature and pressure
-    fpi_df['t'] = (fpi_df['T_xx'] + fpi_df['T_yy'] + fpi_df['T_zz'])/3.0
-    fpi_df['p'] = (fpi_df['P_xx'] + fpi_df['P_yy'] + fpi_df['P_zz'])/3.0
-    fpi_df.sc = sc
-    fpi_df.mode = mode
-    fpi_df.species = species
-    
-    return fpi_df
 
 
 def maxwellian_distribution(dist, N=None, bulkv=None, T=None):

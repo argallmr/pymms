@@ -50,11 +50,10 @@ setup(
                           "requests>=2.22.0",
                           "scipy>=1.4.1", 
                           "tqdm>=4.36.1",
-                          "cdflib",
+                          "cdflib >= 3.7.0",
                           "matplotlib>=3.1.1"
                           ],
       extras_require = {'data': ["cdflib >= 3.7.0",
-                                 "pandas >= 1.0.3",
                                  "xarray >= 0.16.0"],
                         'gls': ["tensorflow >=1.13.1, <=1.15",
                                 "keras >=2.2.4, <=2.3.1"],

@@ -7,8 +7,25 @@ The format is based on `Keep a Changelog`_, and this project adheres to `Semanti
 .. _Keep a Changelog https://keepachangelog.com/en/1.0.0/
 .. _Semantic Versioning https://semver.org/spec/v2.0.0.html
 
+v0.4.2
+------
+Added
+^^^^^
+* Downloader base class
+* EDI module
+* Examples for plotting entropy, velocity space entropy, instrument data overview, fsm timeseries and spectral data, 
+* Photoelectron and spacecraft potential correction for FPI moments
+* FPI time tags can be centered in sampling interval
+
+Fixed
+^^^^^
+* Data loaders now have a standardized interface
+* Preconditioning the FPI distribution functions does not cumulatively change the energy tables
+* Variable data is read from CDF file once
+* Variable data that is pointed to by another variable's variable attributes are added directly to the dataset to prevent infinite loops. See FSM for work-around example.
+
 v0.4.1
-------------
+------
 Added
 ^^^^^
 * Read FPI omnidirectional energy spectrograms
