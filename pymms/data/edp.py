@@ -1,6 +1,4 @@
-from pymms.sdc import mrmms_sdc_api as api
-from . import util
-import xarray as xr
+from pymms.data import util
 
 
 def check_spacecraft(sc):
@@ -39,113 +37,163 @@ def check_coords(coords, instr='edp', level='l2'):
                           )
                          )
 
-
-def load_data(sc, mode, start_date, end_date,
-              level='l2', coords='gse'):
-    """
-    Load EDP spacecraft potential data.
+def rename(data, sc, mode, level, optdesc):
+    '''
+    Rename standard variables names to something more memorable.
     
     Parameters
     ----------
+    data : `xarray.Dataset`
+        Data to be renamed
     sc : str
         Spacecraft ID: ('mms1', 'mms2', 'mms3', 'mms4')
     mode : str
         Instrument mode: ('fast', 'brst'). If 'srvy' is given, it is
         automatically changed to 'fast'.
-    start_date, end_date : `datetime.datetime`
-        Start and end of the data interval.
+    level : str
+        Data quality level ('l1a', 'l2pre', 'l2')
+    optdesc : str
+        Optional descriptor. Options are: ('dce', 'scpot')
     
     Returns
     -------
-    scpot : `metaarray.metaarray`
-        Spacecraft potential.
-    """
+    data : `xarray.Dataset`
+        Dataset with variables renamed
+    '''
     
-    # Check the inputs
-    check_spacecraft(sc)
-    mode = check_mode(mode)
-    
-    # File and variable name parameters
+    # Variable name parameters
     instr = 'edp'
-    optdesc = 'dce'
     t_vname = '_'.join((sc, instr, 'epoch', mode, level))
-    e_vname = '_'.join((sc, instr, optdesc, coords, mode, level))
+
+    if optdesc == 'dce':
+        e_dsl_vname = '_'.join((sc, instr, optdesc, 'dsl', mode, level))
+        e_gse_vname = '_'.join((sc, instr, optdesc, 'gse', mode, level))
+        new_names = {t_vname: 'time',
+                     e_dsl_vname: 'E_DSL',
+                     e_gse_vname: 'E_GSE'}
     
-    # Download the data
-    sdc = api.MrMMS_SDC_API(sc, instr, mode, level,
-                            optdesc=optdesc,
-                            start_date=start_date,
-                            end_date=end_date)
-    edp_files = sdc.download_files()
-    edp_files = api.sort_files(edp_files)[0]
-    
-    # Concatenate data along the records (time) dimension, which
-    # should be equivalent to the DEPEND_0 variable name of the
-    # magnetic field variable.
-    edp_data = []
-    for file in edp_files:
-        edp_data.append(util.cdf_to_ds(file, e_vname))
-    edp_data = xr.concat(edp_data, dim=edp_data[0][e_vname].dims[0])
-    edp_data = edp_data.rename({t_vname: 'time',
-                                e_vname: 'E'})
-    edp_data = edp_data.sel(time=slice(start_date, end_date))
-    edp_data.attrs['files'] = edp_files
+    elif optdesc == 'scpot':
+        scpot_vname = '_'.join((sc, instr, optdesc, mode, level))
+        new_names = {t_vname: 'time',
+                     scpot_vname: 'Vsc'}
+    else:
+        raise ValueError('Optional descriptor {0} not in (dce, scpot).'
+                         .format(optdesc))
 
-    return edp_data
+    # Change names
+    return data.rename(new_names)
 
 
-def load_scpot(sc, mode, start_date, end_date,
-               level='l2'):
+def load_data(sc='mms1', mode='fast', level='l2', optdesc='dce',
+              start_date=None, end_date=None, rename_vars=True,
+              **kwargs):
     """
-    Load EDP spacecraft potential data.
+    Load EDP data.
     
     Parameters
     ----------
     sc : str
         Spacecraft ID: ('mms1', 'mms2', 'mms3', 'mms4')
     mode : str
-        Instrument mode: ('fast', 'brst'). If 'srvy' is given, it is
-        automatically changed to 'fast'.
+        Instrument mode: ('slow', 'srvy', 'fast', 'brst').
+    level : str
+        Data quality level ('l1a', 'l2pre', 'l2')
+    optdesc : str
+        Optional descriptor ('dce', 'scpot', 'hmfe')
     start_date, end_date : `datetime.datetime`
         Start and end of the data interval.
+    rename_vars : bool
+        If true (default), rename the standard MMS variable names
+        to something more memorable and easier to use.
+    \*\*kwargs : dict
+        Any keyword accepted by *pymms.data.util.load_data*
     
     Returns
     -------
-    scpot : `metaarray.metaarray`
-        Spacecraft potential.
+    data : `xarray.Dataset`
+        EDP data.
     """
     
     # Check the inputs
     check_spacecraft(sc)
     mode = check_mode(mode)
     
-    # File and variable name parameters
-    instr = 'edp'
+    # Load the data
+    t_vname = '_'.join((sc, 'edp', 'epoch', mode, level))
+    data = util.load_data(sc=sc, instr='edp', mode=mode, level=level,
+                          optdesc=optdesc,
+                          start_date=start_date, end_date=end_date,
+                          record_dim=t_vname, **kwargs)
+    
+    # Trim time interval
+    data = data.sel({t_vname: slice(start_date, end_date)})
+    
+    # Rename variables
+    if rename_vars:
+        data = rename(data, sc, mode, level, optdesc)
+    
+    # Add data descriptors to attributes
+    data.attrs['sc'] = sc
+    data.attrs['instr'] = 'fpi'
+    data.attrs['mode'] = mode
+    data.attrs['level'] = level
+    data.attrs['optdesc'] = optdesc
+
+    return data
+
+
+def load_scpot(sc='mms1', mode='fast', level='l2',
+              start_date=None, end_date=None, rename_vars=True,
+              **kwargs):
+    """
+    Load spacecraft potential data.
+    
+    Parameters
+    ----------
+    sc : str
+        Spacecraft ID: ('mms1', 'mms2', 'mms3', 'mms4')
+    mode : str
+        Instrument mode: ('slow', 'srvy', 'fast', 'brst').
+    level : str
+        Data quality level ('l1a', 'l2pre', 'l2')
+    start_date, end_date : `datetime.datetime`
+        Start and end of the data interval.
+    rename_vars : bool
+        If true (default), rename the standard MMS variable names
+        to something more memorable and easier to use.
+    \*\*kwargs : dict
+        Any keyword accepted by *pymms.data.util.load_data*
+    
+    Returns
+    -------
+    data : `xarray.Dataset`
+        Spacecraft potential data.
+    """
+    
+    # Check the inputs
+    check_spacecraft(sc)
+    mode = check_mode(mode)
     optdesc = 'scpot'
-    t_vname = '_'.join((sc, instr, 'epoch', mode, level))
-    scpot_vname = '_'.join((sc, instr, optdesc, mode, level))
     
-    # Download the data
-    sdc = api.MrMMS_SDC_API(sc, instr, mode, level,
-                            optdesc=optdesc,
-                            start_date=start_date,
-                            end_date=end_date)
-    edp_files = sdc.download_files()
-    edp_files = api.sort_files(edp_files)[0]
+    # Load the data
+    t_vname = '_'.join((sc, 'edp', 'epoch', mode, level))
+    data = util.load_data(sc=sc, instr='edp', mode=mode, level=level,
+                          optdesc=optdesc,
+                          start_date=start_date, end_date=end_date,
+                          record_dim=t_vname, **kwargs)
     
-    # Concatenate data along the records (time) dimension, which
-    # should be equivalent to the DEPEND_0 variable name of the
-    # magnetic field variable.
-    edp_data = []
-    for file in edp_files:
-        edp_data.append(util.cdf_to_ds(file, scpot_vname))
-    edp_data = xr.concat(edp_data, dim=edp_data[0][scpot_vname].dims[0])
-    edp_data = edp_data.rename({t_vname: 'time',
-                                scpot_vname: 'Vsc'})
-    edp_data = edp_data.sel(time=slice(start_date, end_date))
+    # Trim time interval
+    t_vname = '_'.join((sc, 'edp', 'epoch', mode, level))
+    data = data.sel({t_vname: slice(start_date, end_date)})
+    
+    if rename_vars:
+        data = rename(data, sc, mode, level, optdesc)
+    
+    # Add data descriptors to attributes
+    data.attrs['sc'] = sc
+    data.attrs['instr'] = 'edp'
+    data.attrs['mode'] = mode
+    data.attrs['level'] = level
+    data.attrs['optdesc'] = optdesc
 
-    return edp_data
-
-if __name__ == '__main__':
-    pass
-    
+    return data

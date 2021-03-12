@@ -1,59 +1,29 @@
-import xarray as xr
 from pymms.data import util
 
-def load_data(sc='mms1', mode='brst', level='l3', optdesc='8khz',
-              start_date=None, end_date=None, **kwargs):
-    """
-    Load EDI data.
-    
-    CDF variable names are renamed to something easier to remember and
-    use. Original CDF variable names are kept as an attribute "cdf_name"
-    in each individual variable.
+
+def rename(data, sc, mode, level, optdesc):
+    '''
+    Rename standard variables names to something more memorable.
     
     Parameters
     ----------
+    ds : `xarray.Dataset`
+        Data to be renamed
     sc : str
         Spacecraft ID: ('mms1', 'mms2', 'mms3', 'mms4')
     mode : str
-        Instrument mode: ('slow', 'srvy', 'fast', 'brst').
+        Instrument mode: ('fast', 'brst'). If 'srvy' is given, it is
+        automatically changed to 'fast'.
+    level : str
+        Data quality level ('l1a', 'l2pre', 'l2')
     optdesc : str
-        Optional descriptor. Options are: {'efield' | 'amb' | 'amb-pm2' |
-        'amb-alt-cc', 'amb-alt-oc', 'amb-alt-oob', 'amb-perp-c',
-        'amb-perp-ob'}
-    \*\*kwargs : dict
-    	Any keyword accepted by *pymms.data.util.load_data*
+        Optional descriptor. Options are: ('8khz',)
     
     Returns
     -------
-    dist : `xarray.Dataset`
-        EDI data.
-    """
-    
-    # Load the data
-    #   - R is concatenated along Epoch, but depends on Epoch_state
-    data = util.load_data(sc=sc, instr='fsm', mode=mode, level=level,
-                          optdesc=optdesc, start_date=start_date, 
-                          end_date=end_date, team_site=True, **kwargs)
-    
-    # The FSM CDFs do not have a DEPEND_0 attribute for the time delta
-    # variable. Coordinates have to be assigned and its index reset
-    if isinstance(data, list):
-        t_delta_vname = '_'.join((sc, 'fsm', 'epoch', 'delta', mode, level))
-        for idx, ds in enumerate(data):
-            data[idx] = (ds.assign_coords({t_delta_vname: ds['Epoch']})
-                           .reset_coords(t_delta_vname))
-        
-        # Concatenate the dat
-        data = xr.concat(data, dim='Epoch')
-        
-        # Add attributes about the data request
-        data.attrs['sc'] = sc
-        data.attrs['instr'] = 'fsm'
-        data.attrs['mode'] = mode
-        data.attrs['level'] = level
-        data.attrs['optdesc'] = optdesc
-    
-    # Rename data variables to something simpler
+    data : `xarray.Dataset`
+        Dataset with variables renamed
+    '''
     if optdesc == '8khz':
         t_delta_vname = '_'.join((sc, 'fsm', 'epoch', 'delta', mode, level))
         b_gse_vname = '_'.join((sc, 'fsm', 'b', 'gse', mode, level))
@@ -78,5 +48,73 @@ def load_data(sc='mms1', mode='brst', level='l3', optdesc='8khz',
                     .drop([b_labl_vname, r_labl_vname, repr_vname], errors='ignore')
                     .rename(names)
                 )
+    else:
+        raise ValueError('Optional descriptor not recognized: "{0}"'
+                         .format(optdesc))
+    
+    return data
+
+def load_data(sc='mms1', mode='brst', level='l3', optdesc='8khz',
+              start_date=None, end_date=None, rename_vars=True,
+              **kwargs):
+    """
+    Load EDI data.
+    
+    CDF variable names are renamed to something easier to remember and
+    use. Original CDF variable names are kept as an attribute "cdf_name"
+    in each individual variable.
+    
+    Parameters
+    ----------
+    sc : str
+        Spacecraft ID: ('mms1', 'mms2', 'mms3', 'mms4')
+    mode : str
+        Instrument mode: ('fast', 'brst'). If 'srvy' is given, it is
+        automatically changed to 'fast'.
+    level : str
+        Data quality level ('l1a', 'l2pre', 'l2')
+    optdesc : str
+        Optional descriptor. Options are: ('8khz',)
+    start_date, end_date : `datetime.datetime`
+        Start and end of the data interval.
+    rename_vars : bool
+        If true (default), rename the standard MMS variable names
+        to something more memorable and easier to use.
+    \*\*kwargs : dict
+        Any keyword accepted by *pymms.data.util.load_data*
+    
+    Returns
+    -------
+    dist : `xarray.Dataset`
+        FSM data.
+    """
+    
+    # Load the data
+    #   - R is concatenated along Epoch, but depends on Epoch_state
+    data = util.load_data(sc=sc, instr='fsm', mode=mode, level=level,
+                          optdesc=optdesc, start_date=start_date, 
+                          end_date=end_date, team_site=True, **kwargs)
+    
+    # The FSM CDFs do not have a DEPEND_0 attribute for the time delta
+    # variable. Coordinates have to be assigned and its index reset
+    if isinstance(data, list):
+        t_delta_vname = '_'.join((sc, 'fsm', 'epoch', 'delta', mode, level))
+        for idx, ds in enumerate(data):
+            data[idx] = (ds.assign_coords({t_delta_vname: ds['Epoch']})
+                           .reset_coords(t_delta_vname))
+        
+        # Concatenate the dat
+        data = xr.concat(data, dim='Epoch')
+    
+    # Rename data variables to something simpler
+    if rename_vars:
+        data = rename(data, sc, mode, level, optdesc)
+        
+    # Add attributes about the data request
+    data.attrs['sc'] = sc
+    data.attrs['instr'] = 'fsm'
+    data.attrs['mode'] = mode
+    data.attrs['level'] = level
+    data.attrs['optdesc'] = optdesc
     
     return data

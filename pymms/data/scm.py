@@ -1,9 +1,52 @@
 from pymms.data import util
 
+def rename(data, sc, mode, level, optdesc):
+    '''
+    Rename standard variables names to something more memorable.
+    
+    Parameters
+    ----------
+    data : `xarray.Dataset`
+        Data to be renamed
+    sc : str
+        Spacecraft ID: ('mms1', 'mms2', 'mms3', 'mms4')
+    mode : str
+        Instrument mode: ('fast', 'brst'). If 'srvy' is given, it is
+        automatically changed to 'fast'.
+    level : str
+        Data quality level ('l1a', 'l2pre', 'l2')
+    optdesc : str
+        Optional descriptor. Options are: ('8khz',)
+    
+    Returns
+    -------
+    data : `xarray.Dataset`
+        Dataset with variables renamed
+    '''
+    b_gse_vname = '_'.join((sc, 'scm', 'acb', 'gse', optdesc, mode, level))
+    b_gse_lbl_vname = '_'.join((sc, 'scm', 'acb', 'gse',
+                                optdesc, mode, level, 'labl', '1'))
+    b_gse_repr_vname = '_'.join((sc, 'scm', 'acb', 'gse',
+                                 optdesc, mode, level,
+                                 'representation', '1'))
+
+    names = {'Epoch': 'time',
+             'Epoch_delta': 'time_delta',
+             b_gse_vname: 'B_GSE',
+             b_gse_lbl_vname: 'b_index'}
+
+    names = {key:val for key, val in names.items() if key in data}
+    data = (data.assign_coords({'b_index': ['x', 'y', 'z']})
+                .drop([b_gse_lbl_vname, b_gse_repr_vname], errors='ignore')
+                .rename(names)
+            )
+    return data
+
 def load_data(sc='mms1', mode='srvy', level='l2',
-              start_date=None, end_date=None, **kwargs):
+              start_date=None, end_date=None, rename_vars=True,
+              **kwargs):
     """
-    Load EDI data.
+    Load SCM data.
     
     CDF variable names are renamed to something easier to remember and
     use. Original CDF variable names are kept as an attribute "cdf_name"
@@ -15,20 +58,21 @@ def load_data(sc='mms1', mode='srvy', level='l2',
         Spacecraft ID: ('mms1', 'mms2', 'mms3', 'mms4')
     mode : str
         Instrument mode: ('slow', 'srvy', 'fast', 'brst').
-    optdesc : str
-        Optional descriptor. Options are: {'efield' | 'amb' | 'amb-pm2' |
-        'amb-alt-cc', 'amb-alt-oc', 'amb-alt-oob', 'amb-perp-c',
-        'amb-perp-ob'}
+    level : str
+        Data quality level ('l1a', 'l2pre', 'l2')
+    start_date, end_date : `datetime.datetime`
+        Start and end of the data interval.
+    rename_vars : bool
+        If true (default), rename the standard MMS variable names
+        to something more memorable and easier to use.
     \*\*kwargs : dict
-    	Any keyword accepted by *pymms.data.util.load_data*
+        Any keyword accepted by *pymms.data.util.load_data*
     
     Returns
     -------
-    dist : `xarray.Dataset`
-        EDI data.
+    data : `xarray.Dataset`
+        SCM data.
     """
-    rename = True
-    
     if mode == 'srvy':
         optcesc = 'scsrvy'
     elif mode == 'slow':
@@ -43,28 +87,13 @@ def load_data(sc='mms1', mode='srvy', level='l2',
     
     # Load the data
     #   - R is concatenated along Epoch, but depends on Epoch_state
-    data = util.load_data(sc=sc, instr='scm', mode=mode, optdesc=optdesc,
+    data = util.load_data(sc=sc, instr='scm', mode=mode, level=level,
+                          optdesc=optdesc,
                           start_date=start_date, end_date=end_date,
                           **kwargs)
     
     # Rename data variables to something simpler
-    if rename:
-        b_gse_vname = '_'.join((sc, 'scm', 'acb', 'gse', optdesc, mode, level))
-        b_gse_lbl_vname = '_'.join((sc, 'scm', 'acb', 'gse',
-                                    optdesc, mode, level, 'labl', '1'))
-        b_gse_repr_vname = '_'.join((sc, 'scm', 'acb', 'gse',
-                                     optdesc, mode, level,
-                                     'representation', '1'))
-
-        names = {'Epoch': 'time',
-                 'Epoch_delta': 'time_delta',
-                 b_gse_vname: 'B_GSE',
-                 b_gse_lbl_vname: 'b_index'}
-
-        names = {key:val for key, val in names.items() if key in data}
-        data = (data.assign_coords({'b_index': ['x', 'y', 'z']})
-                    .drop([b_gse_lbl_vname, b_gse_repr_vname], errors='ignore')
-                    .rename(names)
-                )
+    if rename_vars:
+        data = rename(data, sc, mode, level, optdesc)
     
     return data

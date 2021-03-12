@@ -3,28 +3,33 @@ from pymms.data import fgm, fpi
 import numpy as np
 from matplotlib import pyplot as plt
 
-def kinetic_entropy(sc, mode, start_date, end_date, **kwargs):
+def entropy(sc, mode, start_date, end_date, **kwargs):
     
     # Read the data
-    b = fgm.load_data(sc, mode, start_date, end_date)
-    dis_moms = fpi.load_moms(sc, mode, 'i', start_date, end_date)
-    des_moms = fpi.load_moms(sc, mode, 'e', start_date, end_date)
-    dis_dist = fpi.load_dist(sc, mode, 'i', start_date, end_date)
-    des_dist = fpi.load_dist(sc, mode, 'e', start_date, end_date)
+    b = fgm.load_data(sc=sc, mode=mode,
+                      start_date=start_date, end_date=end_date)
+    dis_moms = fpi.load_moms(sc=sc, mode=mode, optdesc='dis-moms',
+                             start_date=start_date, end_date=end_date)
+    des_moms = fpi.load_moms(sc=sc, mode=mode, optdesc='des-moms',
+                             start_date=start_date, end_date=end_date)
+    dis_dist = fpi.load_dist(sc=sc, mode=mode, optdesc='dis-dist',
+                             start_date=start_date, end_date=end_date)
+    des_dist = fpi.load_dist(sc=sc, mode=mode, optdesc='des-dist',
+                             start_date=start_date, end_date=end_date)
     
     # Equivalent Maxwellian distribution
-    dis_max_dist = fpi.maxwellian_distribution(dis_dist,
+    dis_max_dist = fpi.maxwellian_distribution(dis_dist['dist'],
                                                N=dis_moms['density'],
                                                bulkv=dis_moms['velocity'],
                                                T=dis_moms['t'])
-    des_max_dist = fpi.maxwellian_distribution(des_dist,
+    des_max_dist = fpi.maxwellian_distribution(des_dist['dist'],
                                                N=des_moms['density'],
                                                bulkv=des_moms['velocity'],
                                                T=des_moms['t'])
     
     # Entropy density
-    si_dist = fpi.entropy(dis_dist, **kwargs)
-    se_dist = fpi.entropy(des_dist, **kwargs)
+    si_dist = fpi.entropy(dis_dist['dist'], **kwargs)
+    se_dist = fpi.entropy(des_dist['dist'], **kwargs)
     
 #    si_max = fpi.maxwellian_entropy(dis_moms['density'], dis_moms['p'])
 #    se_max = fpi.maxwellian_entropy(des_moms['density'], des_moms['p'])
@@ -33,11 +38,11 @@ def kinetic_entropy(sc, mode, start_date, end_date, **kwargs):
     
     
     # Velcoity space entropy density
-    siv_dist = fpi.vspace_entropy(dis_dist,
+    siv_dist = fpi.vspace_entropy(dis_dist['dist'],
                                   N=dis_moms['density'],
                                   s=si_dist,
                                   **kwargs)
-    sev_dist = fpi.vspace_entropy(des_dist,
+    sev_dist = fpi.vspace_entropy(des_dist['dist'],
                                   N=des_moms['density'],
                                   s=se_dist,
                                   **kwargs)
@@ -59,14 +64,14 @@ def kinetic_entropy(sc, mode, start_date, end_date, **kwargs):
     mev_bar = np.abs(sev_max - sev_dist) / sev_max
     
     # Epsilon
-    ei = fpi.epsilon(dis_dist, N=dis_moms['density'],
-                               V=dis_moms['velocity'],
-                               T=dis_moms['t'],
-                               **kwargs)
-    ee = fpi.epsilon(des_dist, N=des_moms['density'],
-                               V=des_moms['velocity'],
-                               T=des_moms['t'],
-                               **kwargs)
+    ei = fpi.epsilon(dis_dist['dist'], N=dis_moms['density'],
+                                       V=dis_moms['velocity'],
+                                       T=dis_moms['t'],
+                                       **kwargs)
+    ee = fpi.epsilon(des_dist['dist'], N=des_moms['density'],
+                                       V=des_moms['velocity'],
+                                       T=des_moms['t'],
+                                       **kwargs)
     
     # Setup the plot
     nrows = 9
@@ -77,7 +82,8 @@ def kinetic_entropy(sc, mode, start_date, end_date, **kwargs):
     
     # B
     ax = axes[0,0]
-    ax = util.plot([b['B'][:,3], b['B'][:,0], b['B'][:,1], b['B'][:,2]],
+    ax = util.plot([b['B_GSE'][:,3], b['B_GSE'][:,0],
+                    b['B_GSE'][:,1], b['B_GSE'][:,2]],
                    ax=ax, labels=['|B|', 'Bx', 'By', 'Bz'],
                    xaxis='off', ylabel='B\n(nT)'
                    )
@@ -188,11 +194,47 @@ if __name__ == '__main__':
                         help='Start date of the data interval: '
                              '"YYYY-MM-DDTHH:MM:SS""'
                         )
+                        
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument('-d', '--dir',
+                       type=str,
+                       help='Path to output destination',
+                       )
+                        
+    group.add_argument('-f', '--filename',
+                       type=str,
+                       help='Output file name',
+                       )
+                        
+    parser.add_argument('-n', '--no-show',
+                        help='Do not show the plot.',
+                        action='store_true')
 
     args = parser.parse_args()
     t0 = dt.datetime.strptime(args.start_date, '%Y-%m-%dT%H:%M:%S')
     t1 = dt.datetime.strptime(args.end_date, '%Y-%m-%dT%H:%M:%S')
     
-    fig, axes = kinetic_entropy(args.sc, args.mode, t0, t1)
-
-    plt.show()
+    fig, axes = entropy(args.sc, args.mode, t0, t1)
+    
+    # Save to directory
+    if args.dir is not None:
+        optdesc = 's'
+        if t0.date() == t1.date():
+            fname = '_'.join((args.sc, 'fpi', args.mode, 'l2',
+                              optdesc,
+                              t0.strftime('%Y%m%d'), t0.strftime('%H%M%S'),
+                              t1.strftime('%H%M%S')))
+        else:
+            fname = '_'.join((args.sc, 'fpi', args.mode, 'l2',
+                              optdesc,
+                              t0.strftime('%Y%m%d'), t0.strftime('%H%M%S'),
+                              t1.strftime('%Y%m%d'), t1.strftime('%H%M%S')))
+        plt.savefig(path.join(args.dir, fname + '.png'))
+    
+    # Save to file
+    if args.filename is not None:
+        plt.savefig(args.filename)
+    
+    # Show on screen
+    if not args.no_show:
+        plt.show()

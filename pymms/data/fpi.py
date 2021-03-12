@@ -11,7 +11,7 @@ import re
 import requests
 import pathlib
 from pymms import config
-from . import util
+from pymms.data import util
 from tqdm import tqdm
 
 # prep_ephoto
@@ -351,8 +351,8 @@ def center_timestamps(fpi_data):
                                         + fpi_data['Epoch_minus_var'].data)
                                  / 2.0), 'ns')
     
-    data = fpi_data.assign_coords({'time': fpi_data['time'] + t_delta})
-    data['time'].attrs = fpi_data['attrs']
+    data = fpi_data.assign_coords({'Epoch': fpi_data['Epoch'] + t_delta})
+    data['Epoch'].attrs = fpi_data['Epoch'].attrs
     data['Epoch_plus_var'] = t_delta
     data['Epoch_minus_var'] = t_delta
     
@@ -533,8 +533,77 @@ def prep_ephoto(sdc, startdelphi, parity=None):
     return scl * f_model
 
 
-def load_dist(sc, mode, species, start_date, end_date,
-              ephoto=True):
+def load_ephoto(dist_data, sc, mode, level, start_date, end_date):
+    """
+    Load FPI photoelectron model.
+    
+    Parameters
+    ----------
+    dist_data : `xarray.Dataset`
+        Distribution function with ancillary data
+    sc : str
+        Spacecraft ID: ('mms1', 'mms2', 'mms3', 'mms4')
+    mode : str
+        Instrument mode: ('slow', 'fast', 'brst'). If 'srvy' is given, it is
+        automatically changed to 'fast'.
+    level: str
+        Data quality level: ('l1b', 'silt', 'ql', 'l2', 'trig')
+    start_date, end_date : `datetime.datetime`
+        Start and end of the data interval.
+    
+    Returns
+    -------
+    f_model : `xarray.Dataset`
+        Photoelectron model distribution function.
+    """
+    fpi_instr = 'des'
+    
+    # Variable names
+    phi_vname = '_'.join((sc, fpi_instr, 'phi', mode))
+    theta_vname = '_'.join((sc, fpi_instr, 'theta', mode))
+    energy_vname = '_'.join((sc, fpi_instr, 'energy', mode))
+    startdelphi_vname = '_'.join((sc, fpi_instr, 'startdelphi', 'count', mode))
+    parity_vname = '_'.join((sc, fpi_instr, 'steptable', 'parity', mode))
+    sector_index_vname = '_'.join(('mms', fpi_instr, 'sector', 'index', mode))
+    pixel_index_vname = '_'.join(('mms', fpi_instr, 'pixel', 'index', mode))
+    energy_index_vname = '_'.join(('mms', fpi_instr, 'energy', 'index', mode))
+    
+    # Get the photoelectron model
+    sdc = api.MrMMS_SDC_API(sc, 'fpi', mode, level, optdesc='des-dist',
+                            start_date=start_date, end_date=end_date)
+    if mode == 'brst':
+        phi_rename = 'phi'
+        f_model = prep_ephoto(sdc,
+                              dist_data[startdelphi_vname],
+                              dist_data[parity_vname])
+    else:
+        phi_rename = phi_vname
+        f_model = prep_ephoto(sdc,
+                              dist_data[startdelphi_vname])
+    
+    # Re-assign coordinates so that the model can be subtracted
+    # from the distribution. Note that the energy tables for
+    # parity 0 and parity 1 are no longer in the des-dist files
+    # or the model files, so it is impossible to reconstruct the
+    # coordinates. Stealing them from the distribution itself
+    # should be fine, though, because we used the measured
+    # distribution as a template.
+    f_model = (f_model
+               .rename({sector_index_vname: phi_rename,
+                        pixel_index_vname: theta_vname,
+                        energy_index_vname: 'energy'})
+               .assign_coords({phi_vname: dist_data[phi_vname],
+                               theta_vname: dist_data[theta_vname],
+                               energy_vname: dist_data[energy_vname]})
+               .drop_vars(['phi', 'energy'], errors='ignore')
+               )
+    
+    return f_model
+
+
+def load_dist(sc='mms1', mode='fast', level='l2', optdesc='dis-dist',
+              start_date=None, end_date=None, rename_vars=True,
+              ephoto=True, center_times=True, **kwargs):
     """
     Load FPI distribution function data.
     
@@ -543,118 +612,78 @@ def load_dist(sc, mode, species, start_date, end_date,
     sc : str
         Spacecraft ID: ('mms1', 'mms2', 'mms3', 'mms4')
     mode : str
-        Instrument mode: ('fast', 'brst'). If 'srvy' is given, it is
+        Instrument mode: ('slow', 'fast', 'brst'). If 'srvy' is given, it is
         automatically changed to 'fast'.
-    species : str
-        Particle species: ('i', 'e') for ions and electrons, respectively.
+    level: str
+        Data quality level: ('l1b', 'silt', 'ql', 'l2', 'trig')
+    optdesc : str
+        Optional descriptor: ('i', 'e') for ions and electrons, respectively.
     start_date, end_date : `datetime.datetime`
         Start and end of the data interval.
+    rename_vars : bool
+        If true (default), rename the standard MMS variable names
+        to something more memorable and easier to use.
     ephoto : bool
         Remove photo electrons from the distribution. Applies only to
         des data. Requires downloading the des-moms files
+    center_times : bool
+        Move timestamps from the beginning of the sample interval to the middle
+    \*\*kwargs : dict
+        Keywords accepted by `pymms.data.util.load_data`
     
     Returns
     -------
-    dist : `metaarray.metaarray`
+    data : `xarray.Dataset`
         Particle distribution function.
     """
     
     # Check the inputs
     check_spacecraft(sc)
     mode = check_mode(mode)
-    check_species(species)
+    if optdesc not in ('dis-dist', 'des-dist'):
+        raise ValueError('Optional descriptor {0} does not match '
+                         '(dis-dist, des-dist).'.format(optdesc))
     
     # File and variable name parameters
-    instr = 'd{0}s'.format(species)
-    optdesc = instr+'-dist'
+    instr = optdesc[0:3]
     dist_vname = '_'.join((sc, instr, 'dist', mode))
-    epoch_vname = 'Epoch'
-    phi_vname = '_'.join((sc, instr, 'phi', mode))
-    theta_vname = '_'.join((sc, instr, 'theta', mode))
-    energy_vname = '_'.join((sc, instr, 'energy', mode))
-    startdelphi_vname = '_'.join((sc, instr, 'startdelphi', 'count', mode))
-    parity_vname = '_'.join((sc, instr, 'steptable', 'parity', mode))
     
-    # Download the data
-    sdc = api.MrMMS_SDC_API(sc, 'fpi', mode, 'l2',
-                            optdesc=optdesc,
-                            start_date=start_date,
-                            end_date=end_date)
-    fpi_files = sdc.download_files()
-    fpi_files = api.sort_files(fpi_files)[0]
-    
-    # Concatenate data along the records (time) dimension, which
-    # should be equivalent to the DEPEND_0 variable name of the
-    # density variable.
-    fpi_data = []
-    variables = [dist_vname]
-    if (species == 'e') & ephoto:
-        variables.append(startdelphi_vname)
-        if mode == 'brst':
-            variables.append(parity_vname)
-    
-    for file in fpi_files:
-        fpi_data.append(util.cdf_to_ds(file, variables))
-    fpi_data = xr.concat(fpi_data, dim=fpi_data[0][dist_vname].dims[0])
-    dist = fpi_data[dist_vname]
+    # Load the data
+    data = util.load_data(sc=sc, instr='fpi', mode=mode, level=level,
+                          optdesc=optdesc,
+                          start_date=start_date, end_date=end_date,
+                          **kwargs)
     
     # Subtract photoelectrons
-    if ephoto & (species == 'e'):
-        if mode == 'brst':
-            phi_rename = 'phi'
-            f_model = prep_ephoto(sdc,
-                                  fpi_data[startdelphi_vname],
-                                  fpi_data[parity_vname])
-        else:
-            phi_rename = phi_vname
-            f_model = prep_ephoto(sdc,
-                                  fpi_data[startdelphi_vname])
-        
-        # Re-assign coordinates so that the model can be subtracted
-        # from the distribution. Note that the energy tables for
-        # parity 0 and parity 1 are no longer in the des-dist files
-        # or the model files, so it is impossible to reconstruct the
-        # coordinates. Stealing them from the distribution itself
-        # should be fine, though, because we used the measured
-        # distribution as a template.
-        sector_index_vname = '_'.join(('mms', 'des', 'sector', 'index', mode))
-        pixel_index_vname = '_'.join(('mms', 'des', 'pixel', 'index', mode))
-        energy_index_vname = '_'.join(('mms', 'des', 'energy', 'index', mode))
-        
-        f_model = (f_model
-                   .rename({sector_index_vname: phi_rename,
-                            pixel_index_vname: theta_vname,
-                            energy_index_vname: 'energy'})
-                   .assign_coords({phi_vname: dist[phi_vname],
-                                   theta_vname: dist[theta_vname],
-                                   energy_vname: dist[energy_vname]})
-                   .drop_vars(['phi', 'energy'], errors='ignore')
-                   )
-        
-        dist -= f_model
-    
-    # Rename coordinates
-    #   - Phi is record varying in burst but not in survey data,
-    #     so the coordinates are different 
-    coord_rename_dict = {epoch_vname: 'time',
-                         phi_vname: 'phi',
-                         theta_vname: 'theta',
-                         energy_vname: 'energy',
-                         'energy': 'energy_index'}
-    if mode == 'brst':
-        coord_rename_dict['phi'] = 'phi_index'
-    dist = dist.rename(coord_rename_dict)
+    if ephoto & (optdesc[1] == 'e'):
+        f_model = load_ephoto(data, sc, mode, level, start_date, end_date)
+        data[dist_vname] -= f_model
     
     # Select the appropriate time interval
-    dist = dist.sel(time=slice(start_date, end_date))
+    data = data.sel(Epoch=slice(start_date, end_date))
     
-    dist.attrs['sc'] = sc
-    dist.attrs['mode'] = mode
-    dist.attrs['species'] = species
-    return dist
+    # Center timestamps
+    if center_times:
+        data = center_timestamps(data)
+    
+    # Rename variables
+    if rename_vars:
+        data = rename(data, sc, mode, optdesc)
+    
+    for name, value in data.items():
+        value.attrs['sc'] = sc
+        value.attrs['instr'] = 'fpi'
+        value.attrs['mode'] = mode
+        value.attrs['level'] = level
+        value.attrs['optdesc'] = optdesc
+        value.attrs['species'] = optdesc[1]
+    
+    return data
 
 
-def load_moms(sc, mode, species, start_date, end_date):
+def load_moms(sc='mms1', mode='fast', level='l2', optdesc='dis-moms',
+              start_date=None, end_date=None, rename_vars=True,
+              center_times=True, **kwargs):
     """
     Load FPI distribution function data.
     
@@ -663,96 +692,75 @@ def load_moms(sc, mode, species, start_date, end_date):
     sc : str
         Spacecraft ID: ('mms1', 'mms2', 'mms3', 'mms4')
     mode : str
-        Instrument mode: ('fast', 'brst'). If 'srvy' is given, it is
+        Instrument mode: ('slow', 'fast', 'brst'). If 'srvy' is given, it is
         automatically changed to 'fast'.
-    species : str
-        Particle species: ('i', 'e') for ions and electrons, respectively.
+    level: str
+        Data quality level: ('l1b', 'silt', 'ql', 'l2', 'trig')
+    optdesc : str
+        Optional descriptor: ('i', 'e') for ions and electrons, respectively.
     start_date, end_date : `datetime.datetime`
         Start and end of the data interval.
+    rename_vars : bool
+        If true (default), rename the standard MMS variable names
+        to something more memorable and easier to use.
+    center_times : bool
+        Move timestamps from the beginning of the sample interval to the middle
+    \*\*kwargs : dict
+        Keywords accepted by `pymms.data.util.load_data`
     
     Returns
     -------
-    dist : `metaarray.metaarray`
+    dist : `xarray.Dataset`
         Particle distribution function.
     """
     
     # Check the inputs
     check_spacecraft(sc)
     mode = check_mode(mode)
-    check_species(species)
+    if optdesc not in ('dis-moms', 'des-moms'):
+        raise ValueError('Optional descriptor {0} not in (dis-moms, des-moms)'
+                         .format(optdesc))
+    fpi_instr = optdesc[0:3]
     
-    # File and variable name parameters
-    instr = 'd{0}s'.format(species)
-    optdesc = instr+'-moms'
-    epoch_vname = 'Epoch'
-    n_vname = '_'.join((sc, instr, 'numberdensity', mode))
-    v_vname = '_'.join((sc, instr, 'bulkv', 'dbcs', mode))
-    p_vname = '_'.join((sc, instr, 'prestensor', 'dbcs', mode))
-    t_vname = '_'.join((sc, instr, 'temptensor', 'dbcs', mode))
-    q_vname = '_'.join((sc, instr, 'heatq', 'dbcs', mode))
-    t_para_vname = '_'.join((sc, instr, 'temppara', mode))
-    t_perp_vname = '_'.join((sc, instr, 'tempperp', mode))
-    v_labl_vname = '_'.join((sc, instr, 'bulkv', 'dbcs', 'label', mode))
-    q_labl_vname = '_'.join((sc, instr, 'heatq', 'dbcs', 'label', mode))
-    espectr_vname = '_'.join((sc, instr, 'energyspectr', 'omni', mode))
-    cart1_labl_vname = '_'.join((sc, instr, 'cartrep', mode))
-    cart2_labl_vname = '_'.join((sc, instr, 'cartrep', mode, 'dim2'))
-    e_labl_vname = '_'.join((sc, instr, 'energy', mode))
-    varnames = [n_vname, v_vname, p_vname, t_vname, q_vname,
-                t_para_vname, t_perp_vname, espectr_vname]
+    # Load the data
+    data = util.load_data(sc=sc, instr='fpi', mode=mode, level=level,
+                          optdesc=optdesc,
+                          start_date=start_date, end_date=end_date,
+                          **kwargs)
     
-    # Download the data
-    sdc = api.MrMMS_SDC_API(sc, 'fpi', mode, 'l2',
-                            optdesc=optdesc,
-                            start_date=start_date,
-                            end_date=end_date)
-    fpi_files = sdc.download_files()
-    fpi_files = api.sort_files(fpi_files)[0]
-    
-    # Concatenate data along the records (time) dimension, which
-    # should be equivalent to the DEPEND_0 variable name of the
-    # density variable.
-    fpi_data = []
-    for file in fpi_files:
-        fpi_data.append(util.cdf_to_ds(file, varnames))
-    fpi_data = xr.concat(fpi_data, dim=fpi_data[0][n_vname].dims[0])
-    
-    fpi_data = fpi_data.rename({epoch_vname: 'time',
-                                n_vname: 'density',
-                                v_vname: 'velocity',
-                                p_vname: 'prestensor',
-                                t_vname: 'temptensor',
-                                q_vname: 'heatflux',
-                                t_para_vname: 'temppara',
-                                t_perp_vname: 'tempperp',
-                                v_labl_vname: 'velocity_index',
-                                q_labl_vname: 'heatflux_index',
-                                espectr_vname: 'omnispectr',
-                                cart1_labl_vname: 'cart_index_dim1',
-                                cart2_labl_vname: 'cart_index_dim2',
-                                'energy': 'energy_index',
-                                e_labl_vname: 'energy'})
-    fpi_data = fpi_data.sel(time=slice(start_date, end_date))
-    
-    fpi_data = fpi_data.assign(t=(fpi_data['temptensor'][:,0,0] 
-                                  + fpi_data['temptensor'][:,1,1]
-                                  + fpi_data['temptensor'][:,2,2]
-                                  ) / 3.0,
-                               p=(fpi_data['prestensor'][:,0,0] 
-                                  + fpi_data['prestensor'][:,1,1]
-                                  + fpi_data['prestensor'][:,2,2]
-                                  ) / 3.0
-                               )
+    # Adjust time interval
+    data = data.sel(Epoch=slice(start_date, end_date))
     
     # Adjust the time stamp
-    fpi_data = center_timestamps(fpi_data)
+    if center_times:
+        data = center_timestamps(data)
     
-    for name, value in fpi_data.items():
+    # create a few handy derived products
+    t_vname = '_'.join((sc, fpi_instr, 'temptensor', 'dbcs', mode))
+    p_vname = '_'.join((sc, fpi_instr, 'prestensor', 'dbcs', mode))
+    data = data.assign(t=(data[t_vname][:,0,0] 
+                          + data[t_vname][:,1,1]
+                          + data[t_vname][:,2,2]
+                          ) / 3.0,
+                       p=(data[p_vname][:,0,0] 
+                          + data[p_vname][:,1,1]
+                          + data[p_vname][:,2,2]
+                          ) / 3.0
+                       )
+    
+    # Rename variables
+    if rename_vars:
+        data = rename(data, sc, mode, optdesc)
+    
+    for name, value in data.items():
         value.attrs['sc'] = sc
+        value.attrs['instr'] = 'fpi'
         value.attrs['mode'] = mode
-        value.attrs['species'] = species
+        value.attrs['level'] = level
+        value.attrs['optdesc'] = optdesc
+        value.attrs['species'] = optdesc[1]
     
-    return fpi_data
+    return data
 
 
 def load_moms_pd(sc, mode, species, start_date, end_date):
@@ -989,6 +997,91 @@ def moments(dist, moment, **kwargs):
     
     return func(dist, **kwargs)
 
+
+def rename(data, sc, mode, optdesc):
+    '''
+    Rename standard variables names to something more memorable.
+    
+    Parameters
+    ----------
+    data : `xarray.Dataset`
+        Data to be renamed
+    sc : str
+        Spacecraft ID: ('mms1', 'mms2', 'mms3', 'mms4')
+    mode : str
+        Instrument mode: ('slow', 'fast', 'brst'). If 'srvy' is given, it is
+        automatically changed to 'fast'.
+    optdesc : str
+        Optional descriptor. Options are:
+        ('dis-dist', 'des-dist', 'dis-moms', 'des-moms')
+    
+    Returns
+    -------
+    data : `xarray.Dataset`
+        Dataset with variables renamed
+    '''
+    
+    instr = optdesc[0:3]
+    
+    if optdesc[4:] == 'dist':
+        # File and variable name parameters
+        dist_vname = '_'.join((sc, instr, 'dist', mode))
+        epoch_vname = 'Epoch'
+        phi_vname = '_'.join((sc, instr, 'phi', mode))
+        theta_vname = '_'.join((sc, instr, 'theta', mode))
+        energy_vname = '_'.join((sc, instr, 'energy', mode))
+        startdelphi_vname = '_'.join((sc, instr, 'startdelphi', 'count', mode))
+        parity_vname = '_'.join((sc, instr, 'steptable', 'parity', mode))
+    
+        # Rename coordinates
+        #   - Phi is record varying in burst but not in survey data,
+        #     so the coordinates are different 
+        coord_rename_dict = {epoch_vname: 'time',
+                             dist_vname: 'dist',
+                             phi_vname: 'phi',
+                             theta_vname: 'theta',
+                             energy_vname: 'energy',
+                             'energy': 'energy_index'}
+        if mode == 'brst':
+            coord_rename_dict['phi'] = 'phi_index'
+        data = data.rename(coord_rename_dict)
+    
+    elif optdesc[4:] == 'moms':
+        # File and variable name parameters
+        epoch_vname = 'Epoch'
+        n_vname = '_'.join((sc, instr, 'numberdensity', mode))
+        v_vname = '_'.join((sc, instr, 'bulkv', 'dbcs', mode))
+        p_vname = '_'.join((sc, instr, 'prestensor', 'dbcs', mode))
+        t_vname = '_'.join((sc, instr, 'temptensor', 'dbcs', mode))
+        q_vname = '_'.join((sc, instr, 'heatq', 'dbcs', mode))
+        t_para_vname = '_'.join((sc, instr, 'temppara', mode))
+        t_perp_vname = '_'.join((sc, instr, 'tempperp', mode))
+        v_labl_vname = '_'.join((sc, instr, 'bulkv', 'dbcs', 'label', mode))
+        q_labl_vname = '_'.join((sc, instr, 'heatq', 'dbcs', 'label', mode))
+        espectr_vname = '_'.join((sc, instr, 'energyspectr', 'omni', mode))
+        cart1_labl_vname = '_'.join((sc, instr, 'cartrep', mode))
+        cart2_labl_vname = '_'.join((sc, instr, 'cartrep', mode, 'dim2'))
+        e_labl_vname = '_'.join((sc, instr, 'energy', mode))
+        
+        data = data.rename({epoch_vname: 'time',
+                            n_vname: 'density',
+                            v_vname: 'velocity',
+                            p_vname: 'prestensor',
+                            t_vname: 'temptensor',
+                            q_vname: 'heatflux',
+                            t_para_vname: 'temppara',
+                            t_perp_vname: 'tempperp',
+                            v_labl_vname: 'velocity_index',
+                            q_labl_vname: 'heatflux_index',
+                            espectr_vname: 'omnispectr',
+                            cart1_labl_vname: 'cart_index_dim1',
+                            cart2_labl_vname: 'cart_index_dim2',
+                            'energy': 'energy_index',
+                            e_labl_vname: 'energy'})
+        
+    return data
+    
+    
 
 def precondition(dist, E0=100, E_low=10, scpot=None,
                        low_energy_extrapolation=True,

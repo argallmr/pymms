@@ -13,8 +13,9 @@ def fsm_timeseries(sc, start_date, end_date):
     mode = 'brst'
 
     # Load the data
-    fgm_data = fgm.load_data(sc, mode, start_date, end_date)
-    scm_data = scm.load_data(sc, mode, 'l2',
+    fgm_data = fgm.load_data(sc=sc, mode=mode,
+                             start_date=start_date, end_date=end_date)
+    scm_data = scm.load_data(sc=sc, mode=mode,
                              start_date=start_date, end_date=end_date)
     fsm_data = fsm.load_data(sc=sc, start_date=start_date, end_date=end_date)
     
@@ -57,32 +58,32 @@ def fsm_timeseries(sc, start_date, end_date):
 
     # |B|
     ax = axes[3,0]
-    ax = util.plot([fgm_data['|B|'],
-                    fsm_data['B_GSE'].loc[:,'t']],
+    ax = util.plot([fgm_data['B_GSE'].loc[:,'t'],
+                    fsm_data['|B|']],
                    ax=ax, labels=['FGM', 'FSM'],
                    ylabel='|B|\n(nT)'
                    )
 
     # dBx
     ax = axes[0,1]
-    ax = util.plot([scm_data['dB_GSE'].loc[:,'x'],
-                    fsm_data['B_GSE'].loc[:,'x']],
+    ax = util.plot([scm_data['B_GSE'].loc[:,'x'],
+                    fsm_data['dB_GSE'].loc[:,'x']],
                    ax=ax, labels=['SCM', 'FSM'],
                    xaxis='off', ylabel='$\delta$Bx\n(nT)'
                    )
 
     # dBy
     ax = axes[1,1]
-    ax = util.plot([scm_data['dB_GSE'].loc[:,'y'],
-                    fsm_data['B_GSE'].loc[:,'y']],
+    ax = util.plot([scm_data['B_GSE'].loc[:,'y'],
+                    fsm_data['dB_GSE'].loc[:,'y']],
                    ax=ax, labels=['SCM', 'FSM'],
                    xaxis='off', ylabel='$\delta$By\n(nT)'
                    )
 
     # dBz
     ax = axes[2,1]
-    ax = util.plot([scm_data['dB_GSE'].loc[:,'z'],
-                    fsm_data['B_GSE'].loc[:,'z']],
+    ax = util.plot([scm_data['B_GSE'].loc[:,'z'],
+                    fsm_data['dB_GSE'].loc[:,'z']],
                    ax=ax, labels=['SCM', 'FSM'],
                    ylabel='$\delta$Bz\n(nT)'
                    )

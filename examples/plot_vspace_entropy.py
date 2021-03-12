@@ -3,14 +3,19 @@ from pymms.data import fgm, fpi, edp
 import numpy as np
 from matplotlib import pyplot as plt
 
-def kinetic_entropy(sc, mode, start_date, end_date):
+def vspace_entropy(sc, mode, start_date, end_date):
     
     # Read the data
-    b = fgm.load_data(sc, mode, start_date, end_date)
-    dis_moms = fpi.load_moms(sc, mode, 'i', start_date, end_date)
-    des_moms = fpi.load_moms(sc, mode, 'e', start_date, end_date)
-    dis_dist = fpi.load_dist(sc, mode, 'i', start_date, end_date)
-    des_dist = fpi.load_dist(sc, mode, 'e', start_date, end_date)
+    b = fgm.load_data(sc=sc, mode=mode,
+                      start_date=start_date, end_date=end_date)
+    dis_moms = fpi.load_moms(sc=sc, mode=mode, optdesc='dis-moms',
+                             start_date=start_date, end_date=end_date)
+    des_moms = fpi.load_moms(sc=sc, mode=mode, optdesc='des-moms',
+                             start_date=start_date, end_date=end_date)
+    dis_dist = fpi.load_dist(sc=sc, mode=mode, optdesc='dis-dist',
+                             start_date=start_date, end_date=end_date)
+    des_dist = fpi.load_dist(sc=sc, mode=mode, optdesc='des-dist',
+                             start_date=start_date, end_date=end_date)
     
     # Philosopy
     #   - For the Maxwellian distributions, use the FPI moments data
@@ -18,18 +23,19 @@ def kinetic_entropy(sc, mode, start_date, end_date):
     #   - For the integrated moments, do not mix them with FPI moments
     
     # Equivalent Maxwellian distribution
-    dis_max_dist = fpi.maxwellian_distribution(dis_dist,
+    dis_max_dist = fpi.maxwellian_distribution(dis_dist['dist'],
                                                N=dis_moms['density'],
                                                bulkv=dis_moms['velocity'],
                                                T=dis_moms['t'])
-    des_max_dist = fpi.maxwellian_distribution(des_dist,
+    des_max_dist = fpi.maxwellian_distribution(des_dist['dist'],
                                                N=des_moms['density'],
                                                bulkv=des_moms['velocity'],
                                                T=des_moms['t'])
     
     # Spacecraft potential correction
     edp_mode = mode if mode == 'brst' else 'fast'
-    scpot = edp.load_scpot(sc, edp_mode, start_date, end_date)
+    scpot = edp.load_scpot(sc=sc, mode=edp_mode,
+                           start_date=start_date, end_date=end_date)
     scpot_dis = scpot.interp_like(dis_moms, method='nearest')
     scpot_des = scpot.interp_like(des_moms, method='nearest')
     
@@ -42,11 +48,11 @@ def kinetic_entropy(sc, mode, start_date, end_date):
     se_max = fpi.maxwellian_entropy(des_moms['density'], des_moms['p'])
     
     # Velocity space entropy density
-    siv_dist = fpi.vspace_entropy(dis_dist,
+    siv_dist = fpi.vspace_entropy(dis_dist['dist'],
 #                                  N=dis_moms['density'],
 #                                  s=si_dist,
                                   scpot=scpot_dis)
-    sev_dist = fpi.vspace_entropy(des_dist,
+    sev_dist = fpi.vspace_entropy(des_dist['dist'],
 #                                  N=des_moms['density'],
 #                                  s=se_dist,
                                   scpot=scpot_des)
@@ -76,7 +82,8 @@ def kinetic_entropy(sc, mode, start_date, end_date):
     
     # B
     ax = axes[0,0]
-    ax = util.plot([b['B'][:,3], b['B'][:,0], b['B'][:,1], b['B'][:,2]],
+    ax = util.plot([b['B_GSE'][:,3], b['B_GSE'][:,0],
+                    b['B_GSE'][:,1], b['B_GSE'][:,2]],
                    ax=ax, labels=['|B|', 'Bx', 'By', 'Bz'],
                    xaxis='off', ylabel='B\n(nT)'
                    )
@@ -165,12 +172,18 @@ if __name__ == '__main__':
                              '"YYYY-MM-DDTHH:MM:SS""'
                         )
                         
-    parser.add_argument('-f', '--filename',
-                        type=str,
-                        help='Output file name (absolute path)',
-                        )
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument('-d', '--dir',
+                       type=str,
+                       help='Path to output destination',
+                       )
                         
-    parser.add_argument('-', '--no-show',
+    group.add_argument('-f', '--filename',
+                       type=str,
+                       help='Output file name',
+                       )
+                        
+    parser.add_argument('-n', '--no-show',
                         help='Do not show the plot.',
                         action='store_true')
     
@@ -180,7 +193,22 @@ if __name__ == '__main__':
     t1 = dt.datetime.strptime(args.end_date, '%Y-%m-%dT%H:%M:%S')
     
     # Generate the figure
-    fig, axes = kinetic_entropy(args.sc, args.mode, t0, t1)
+    fig, axes = vspace_entropy(args.sc, args.mode, t0, t1)
+    
+    # Save to directory
+    if args.dir is not None:
+        optdesc = 'sv'
+        if t0.date() == t1.date():
+            fname = '_'.join((args.sc, 'd'+args.species+'s', args.mode, 'l2',
+                              optdesc,
+                              t0.strftime('%Y%m%d'), t0.strftime('%H%M%S'),
+                              t1.strftime('%H%M%S')))
+        else:
+            fname = '_'.join((args.sc, 'd'+args.species+'s', args.mode, 'l2',
+                              optdesc,
+                              t0.strftime('%Y%m%d'), t0.strftime('%H%M%S'),
+                              t1.strftime('%Y%m%d'), t1.strftime('%H%M%S')))
+        plt.savefig(path.join(args.dir, fname + '.png'))
     
     # Save to file
     if args.filename is not None:

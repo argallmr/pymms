@@ -12,8 +12,9 @@ def fsm_timeseries(sc, start_date, end_date):
     mode = 'brst'
 
     # Load the data
-    fgm_data = fgm.load_data(sc, mode, start_date, end_date)
-    scm_data = scm.load_data(sc, mode, 'l2',
+    fgm_data = fgm.load_data(sc=sc, mode=mode,
+                             start_date=start_date, end_date=end_date)
+    scm_data = scm.load_data(sc=sc, mode=mode, level='l2',
                              start_date=start_date, end_date=end_date)
     fsm_data = fsm.load_data(sc=sc, start_date=start_date, end_date=end_date)
     

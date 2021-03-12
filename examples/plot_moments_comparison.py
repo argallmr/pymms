@@ -35,42 +35,47 @@ def compare_moments(sc, mode, species, start_date, end_date,
         List of `matplotlib.pyplot.axes` objects
     '''
     # Read the data
-    moms_xr = fpi.load_moms(sc, mode, species, start_date, end_date)
-    dist_xr = fpi.load_dist(sc, mode, species, start_date, end_date,
+    moms_xr = fpi.load_moms(sc=sc, mode=mode,
+                            optdesc='d'+species+'s-moms',
+                            start_date=start_date, end_date=end_date)
+    dist_xr = fpi.load_dist(sc=sc, mode=mode,
+                            optdesc='d'+species+'s-dist',
+                            start_date=start_date, end_date=end_date,
                             ephoto=ephoto_correction)
     
     # Spacecraft potential correction
     scpot = None
     if scpot_correction:
         edp_mode = mode if mode == 'brst' else 'fast'
-        scpot = edp.load_scpot(sc, edp_mode, start_date, end_date)
+        scpot = edp.load_scpot(sc=sc, mode=edp_mode,
+                               start_date=start_date, end_date=end_date)
         scpot = scpot.interp_like(moms_xr, method='nearest')
     
     # Create an equivalent Maxwellian distribution
-    max_xr = fpi.maxwellian_distribution(dist_xr,
+    max_xr = fpi.maxwellian_distribution(dist_xr['dist'],
                                          moms_xr['density'],
                                          moms_xr['velocity'],
                                          moms_xr['t'])
     
     # Density
-    ni_xr = fpi.density(dist_xr, scpot=scpot)
+    ni_xr = fpi.density(dist_xr['dist'], scpot=scpot)
     ni_max_dist = fpi.density(max_xr, scpot=scpot)
     
     # Entropy
-    s_xr = fpi.entropy(dist_xr, scpot=scpot)
+    s_xr = fpi.entropy(dist_xr['dist'], scpot=scpot)
     s_max_dist = fpi.entropy(max_xr, scpot=scpot)
     s_max = fpi.maxwellian_entropy(moms_xr['density'], moms_xr['p'])
     
     # Velocity
-    v_xr = fpi.velocity(dist_xr, N=ni_xr, scpot=scpot)
+    v_xr = fpi.velocity(dist_xr['dist'], N=ni_xr, scpot=scpot)
     v_max_dist = fpi.velocity(max_xr, N=ni_max_dist, scpot=scpot)
     
     # Temperature
-    T_xr = fpi.temperature(dist_xr, N=ni_xr, V=v_xr, scpot=scpot)
+    T_xr = fpi.temperature(dist_xr['dist'], N=ni_xr, V=v_xr, scpot=scpot)
     T_max_dist = fpi.temperature(max_xr, N=ni_max_dist, V=v_max_dist, scpot=scpot)
     
     # Pressure
-    P_xr = fpi.pressure(dist_xr, N=ni_xr, T=T_xr)
+    P_xr = fpi.pressure(dist_xr['dist'], N=ni_xr, T=T_xr)
     P_max_dist = fpi.pressure(max_xr, N=ni_max_dist, T=T_max_dist)
     
     # Scalar pressure
@@ -81,45 +86,13 @@ def compare_moments(sc, mode, species, start_date, end_date,
     p_scalar_max_dist = p_scalar_max_dist.drop(['t_index_dim1', 't_index_dim2'])
     
     # Epsilon
-    e_xr = fpi.epsilon(dist_xr, dist_max=max_xr, N=ni_xr)
+    e_xr = fpi.epsilon(dist_xr['dist'], dist_max=max_xr, N=ni_xr)
     
     nrows = 6
     ncols = 3
     figsize = (10.0, 5.5)
     fig, axes = plt.subplots(nrows=nrows, ncols=ncols,
                              figsize=figsize, squeeze=False)
-    
-    '''
-    locator = mdates.AutoDateLocator()
-    formatter = mdates.ConciseDateFormatter(locator)
-    
-    ax.xaxis.set_major_locator(locator)
-    ax.xaxis.set_major_formatter(formatter)
-    for tick in ax.get_xticklabels():
-        tick.set_rotation(45)
-    
-    # Denisty
-    ax = axes[0,0]
-    lines = []
-    moms_xr['density'].plot(ax=ax, label='moms')
-    ni_xr.plot(ax=ax, label='dist')
-    ni_max_dist.plot(ax=ax, label='max')
-    ax.set_xlabel('')
-    ax.set_xticklabels([])
-    ax.set_ylabel='N\n($cm^{-3}$)'
-    
-    # Create the legend outside the right-most axes
-    leg = ax.legend(bbox_to_anchor=(1.05, 1),
-                    borderaxespad=0.0,
-                    frameon=False,
-                    handlelength=0,
-                    handletextpad=0,
-                    loc='upper left')
-    
-    # Color the text the same as the lines
-    for line, text in zip(lines, leg.get_texts()):
-        text.set_color(line.get_color())
-    '''
     
     # Density
     ax = axes[0,0]

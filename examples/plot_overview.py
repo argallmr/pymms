@@ -6,10 +6,14 @@ from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 def overview(sc, mode, start_date, end_date, **kwargs):
     
     # Read the data
-    b = fgm.load_data(sc, mode, start_date, end_date)
-    e = edp.load_data(sc, mode, start_date, end_date)
-    dis_moms = fpi.load_moms(sc, mode, 'i', start_date, end_date)
-    des_moms = fpi.load_moms(sc, mode, 'e', start_date, end_date)
+    b = fgm.load_data(sc=sc, mode=mode,
+                      start_date=start_date, end_date=end_date)
+    e = edp.load_data(sc=sc, mode=mode,
+                      start_date=start_date, end_date=end_date)
+    dis_moms = fpi.load_moms(sc=sc, mode=mode, optdesc='dis-moms',
+                             start_date=start_date, end_date=end_date)
+    des_moms = fpi.load_moms(sc=sc, mode=mode, optdesc='des-moms',
+                             start_date=start_date, end_date=end_date)
     
     nrows = 7
     ncols = 1
@@ -21,10 +25,10 @@ def overview(sc, mode, start_date, end_date, **kwargs):
     
     # B
     ax = axes[0,0]
-    b['B'][:,3].plot(ax=ax, label='|B|')
-    b['B'][:,0].plot(ax=ax, label='Bx')
-    b['B'][:,1].plot(ax=ax, label='By')
-    b['B'][:,2].plot(ax=ax, label='Bz')
+    b['B_GSE'][:,3].plot(ax=ax, label='|B|')
+    b['B_GSE'][:,0].plot(ax=ax, label='Bx')
+    b['B_GSE'][:,1].plot(ax=ax, label='By')
+    b['B_GSE'][:,2].plot(ax=ax, label='Bz')
     ax.set_xlabel('')
     ax.set_xticklabels([])
     ax.set_ylabel('B [nT]')
@@ -158,9 +162,9 @@ def overview(sc, mode, start_date, end_date, **kwargs):
     
     # E
     ax = axes[6,0]
-    e['E'][:,0].plot(ax=ax, label='Ex')
-    e['E'][:,1].plot(ax=ax, label='Ey')
-    e['E'][:,2].plot(ax=ax, label='Ez')
+    e['E_GSE'][:,0].plot(ax=ax, label='Ex')
+    e['E_GSE'][:,1].plot(ax=ax, label='Ey')
+    e['E_GSE'][:,2].plot(ax=ax, label='Ez')
     ax.set_xlabel('')
     ax.set_xticklabels([])
     ax.set_ylabel('E\n(mV/m)')
@@ -182,7 +186,7 @@ def overview(sc, mode, start_date, end_date, **kwargs):
         text.set_color(line.get_color())
     
     fig.suptitle(sc.upper())
-    plt.subplots_adjust(left=0.15, right=0.8, top=0.95, hspace=0.2)
+    plt.subplots_adjust(left=0.2, right=0.8, top=0.95, hspace=0.2)
 #    plt.setp(axes, xlim=xlim)
     return fig, axes
 
@@ -214,11 +218,47 @@ if __name__ == '__main__':
                         help='Start date of the data interval: '
                              '"YYYY-MM-DDTHH:MM:SS""'
                         )
+                        
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument('-d', '--dir',
+                       type=str,
+                       help='Path to output destination',
+                       )
+                        
+    group.add_argument('-f', '--filename',
+                       type=str,
+                       help='Output file name',
+                       )
+                        
+    parser.add_argument('-n', '--no-show',
+                        help='Do not show the plot.',
+                        action='store_true')
 
     args = parser.parse_args()
     t0 = dt.datetime.strptime(args.start_date, '%Y-%m-%dT%H:%M:%S')
     t1 = dt.datetime.strptime(args.end_date, '%Y-%m-%dT%H:%M:%S')
     
     fig, axes = overview(args.sc, args.mode, t0, t1)
-
-    plt.show()
+    
+    # Save to directory
+    if args.dir is not None:
+        optdesc = 'overview'
+        if t0.date() == t1.date():
+            fname = '_'.join((args.sc, 'instr', args.mode, 'l2',
+                              optdesc,
+                              t0.strftime('%Y%m%d'), t0.strftime('%H%M%S'),
+                              t1.strftime('%H%M%S')))
+        else:
+            fname = '_'.join((args.sc, 'instr', args.mode, 'l2',
+                              optdesc,
+                              t0.strftime('%Y%m%d'), t0.strftime('%H%M%S'),
+                              t1.strftime('%Y%m%d'), t1.strftime('%H%M%S')))
+        plt.savefig(path.join(args.dir, fname + '.png'))
+    
+    # Save to file
+    if args.filename is not None:
+        plt.savefig(args.filename)
+    
+    # Show on screen
+    if not args.no_show:
+        plt.show()
