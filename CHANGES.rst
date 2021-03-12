@@ -7,6 +7,13 @@ The format is based on `Keep a Changelog`_, and this project adheres to `Semanti
 .. _Keep a Changelog https://keepachangelog.com/en/1.0.0/
 .. _Semantic Versioning https://semver.org/spec/v2.0.0.html
 
+
+v0.4.3
+------
+Fixed
+^^^^^
+* Correct version of cdflib dependency
+
 v0.4.2
 ------
 Added
