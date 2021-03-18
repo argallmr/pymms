@@ -261,10 +261,15 @@ def cdf_to_ds(filename, variables=None, varformat=None, data_vars=True):
     
     # Match regular expression(s)
     elif varformat is not None:
+        if isinstance(varformat, str):
+            varformat = [varformat]
         all_variables = cdf_varnames(cdf, data_vars=data_vars)
+        
         varnames = []
         for fmt in varformat:
-            varnames =+ [v for v in all_variables if re.match(fmt, v)]
+            regex = re.compile(fmt)
+            matches = [v for v in all_variables if bool(regex.search(v))]
+            varnames += matches
     
     # Select all (data) variables
     else:
@@ -503,31 +508,9 @@ def cdf_attget(cdf, da):
         da.attrs[attrname] = attrvalue
 
 
-def rename_df_cols(df, old_col, new_cols):
-    '''
-    Each column of a multi-dimensional CDF variable gets stored as
-    its own independent column in the DataFrame, with "_#" appended
-    to the original variable name to indicate which column index
-    the column was taken from. This function renames those columns.
-    
-    Parameters
-    ----------
-    df : `pandas.DataFrame`
-        DataFrame for which the columns are to be renamed
-    old_col : str
-        Name of the column (sans "_#")
-    new_cols : list
-        New names to be given to the columns
-    '''
-    df.rename(columns={'{}_{}'.format(old_col, idx): new_col_name
-                       for idx, new_col_name in enumerate(new_cols)},
-              inplace=True
-              )
-
-
 def load_data(sc='mms1', instr='fgm', mode='srvy', level='l2',
               optdesc=None, start_date=None, end_date=None,
-              offline=False, record_dim='Epoch', team_site=False,
+              offline=False, record_dim=None, team_site=False,
               **kwargs):
     """
     Load MMS data.
@@ -605,11 +588,22 @@ def load_data(sc='mms1', instr='fgm', mode='srvy', level='l2',
     else:
         rec_vname = record_dim
     
+    # Notes:
+    # 1. Concatenation can fail if, e.g., a variable does not have a
+    # coordinate assigned along a given dimension. Instead of crashing,
+    # return the list of datasets so that they can be corrected and
+    # concatenated externally.
+    #
+    # 2. If data variables in the dataset do not have the dimension
+    # identified by rec_vname, a new dimension is added. If the dataset is
+    # large, this can cause xarray/python to use all available ram and
+    # crash. A fix would be to 1) find all DEPEND_0 variables, 2) use the
+    # data_vars='minimal' option to concat for each one, 3) combine the
+    # resulting datasets back together.
     try:
         data = xr.concat(data, dim=rec_vname)
     except Exception as E:
         return data
-    data = data.sel({rec_vname: slice(start_date, end_date)})
     
     # Keep information about the data
     data.attrs['sc'] = sc

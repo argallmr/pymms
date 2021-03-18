@@ -1,7 +1,9 @@
+import xarray as xr
+
 from pymms.data import util
 
 
-def rename(data, sc, mode, level, optdesc):
+def rename(data, sc, mode, level, optdesc, product):
     '''
     Rename standard variables names to something more memorable.
     
@@ -24,39 +26,47 @@ def rename(data, sc, mode, level, optdesc):
     data : `xarray.Dataset`
         Dataset with variables renamed
     '''
-    if optdesc == '8khz':
+    if product == 'b':
         t_delta_vname = '_'.join((sc, 'fsm', 'epoch', 'delta', mode, level))
         b_gse_vname = '_'.join((sc, 'fsm', 'b', 'gse', mode, level))
         b_mag_vname = '_'.join((sc, 'fsm', 'b', 'mag', mode, level))
-        r_gse_vname = '_'.join((sc, 'fsm', 'r', 'gse', mode, level))
         b_labl_vname = '_'.join((sc, 'fsm', 'b', 'gse', 'labls', mode, level))
-        r_labl_vname = 'label_r_gse'
-        repr_vname = 'represent_vec_tot'
         
         names = {'Epoch': 'time',
-                 'Epoch_state': 'time_r',
                  t_delta_vname: 'time_delta',
                  b_gse_vname: 'B_GSE',
                  b_mag_vname: '|B|',
+                 b_labl_vname: 'b_index'}
+
+        names = {key:val for key, val in names.items() if key in data}
+        data = (data.assign_coords({'b_index': ['x', 'y', 'z']})
+                    .drop([b_labl_vname,], errors='ignore')
+                    .rename(names)
+                )
+        
+    elif product == 'r':
+        r_gse_vname = '_'.join((sc, 'fsm', 'r', 'gse', mode, level))
+        r_labl_vname = 'label_r_gse'
+        repr_vname = 'represent_vec_tot'
+        
+        names = {'Epoch_state': 'time',
                  r_gse_vname: 'R_GSE',
-                 b_labl_vname: 'b_index',
                  r_labl_vname: 'r_index'}
 
         names = {key:val for key, val in names.items() if key in data}
-        data = (data.assign_coords({'b_index': ['x', 'y', 'z'],
-                                    'r_index': ['x', 'y', 'z', '|r|']})
-                    .drop([b_labl_vname, r_labl_vname, repr_vname], errors='ignore')
+        data = (data.assign_coords({'r_index': ['x', 'y', 'z', '|r|']})
+                    .drop([r_labl_vname, repr_vname], errors='ignore')
                     .rename(names)
                 )
     else:
-        raise ValueError('Optional descriptor not recognized: "{0}"'
-                         .format(optdesc))
+        raise ValueError('Invalid data product {0}. Choose from (b, r)'
+                         .format(product))
     
     return data
 
 def load_data(sc='mms1', mode='brst', level='l3', optdesc='8khz',
               start_date=None, end_date=None, rename_vars=True,
-              **kwargs):
+              product='b', **kwargs):
     """
     Load EDI data.
     
@@ -77,6 +87,8 @@ def load_data(sc='mms1', mode='brst', level='l3', optdesc='8khz',
         Optional descriptor. Options are: ('8khz',)
     start_date, end_date : `datetime.datetime`
         Start and end of the data interval.
+    product : str
+        Data product to be loaded ('b', 'r')
     rename_vars : bool
         If true (default), rename the standard MMS variable names
         to something more memorable and easier to use.
@@ -89,11 +101,23 @@ def load_data(sc='mms1', mode='brst', level='l3', optdesc='8khz',
         FSM data.
     """
     
+    # Select only the
+    if product in ('b', 'b-field'):
+        product = 'b'
+        varformat = '_b_(bcs|dmpa|gse|gsm)_'
+    elif product in ('r', 'ephemeris', 'state'):
+        product = 'r'
+        varformat = '_r_(gse|gsm)_'
+    else:
+        raise ValueError('Invalid data product {0}. Choose from (b, r)'
+                         .format(product))
+    
     # Load the data
     #   - R is concatenated along Epoch, but depends on Epoch_state
     data = util.load_data(sc=sc, instr='fsm', mode=mode, level=level,
                           optdesc=optdesc, start_date=start_date, 
-                          end_date=end_date, team_site=True, **kwargs)
+                          end_date=end_date, team_site=True,
+                          varformat=varformat, **kwargs)
     
     # The FSM CDFs do not have a DEPEND_0 attribute for the time delta
     # variable. Coordinates have to be assigned and its index reset
@@ -108,7 +132,7 @@ def load_data(sc='mms1', mode='brst', level='l3', optdesc='8khz',
     
     # Rename data variables to something simpler
     if rename_vars:
-        data = rename(data, sc, mode, level, optdesc)
+        data = rename(data, sc, mode, level, optdesc, product=product)
         
     # Add attributes about the data request
     data.attrs['sc'] = sc
