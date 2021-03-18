@@ -8,6 +8,16 @@ The format is based on `Keep a Changelog`_, and this project adheres to `Semanti
 .. _Semantic Versioning https://semver.org/spec/v2.0.0.html
 
 
+v0.4.4
+------
+Added
+^^^^^
+* coords keyword to fgm and fsm data loaders to limit amount of data loaded.
+
+Fixed
+^^^^^
+* Python crashed when concatenating large datasets with variables having different DEPEND_0 cdf variable attributes. These variables are loaded separately.
+
 v0.4.3
 ------
 Fixed
