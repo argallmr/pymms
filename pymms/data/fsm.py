@@ -66,7 +66,7 @@ def rename(data, sc, mode, level, optdesc, product):
 
 def load_data(sc='mms1', mode='brst', level='l3', optdesc='8khz',
               start_date=None, end_date=None, rename_vars=True,
-              product='b', **kwargs):
+              coords='gse', product='b', **kwargs):
     """
     Load EDI data.
     
@@ -87,6 +87,8 @@ def load_data(sc='mms1', mode='brst', level='l3', optdesc='8khz',
         Optional descriptor. Options are: ('8khz',)
     start_date, end_date : `datetime.datetime`
         Start and end of the data interval.
+    coords : str, list
+        Data coordinate system ('gse', 'gsm')
     product : str
         Data product to be loaded ('b', 'r')
     rename_vars : bool
@@ -100,17 +102,20 @@ def load_data(sc='mms1', mode='brst', level='l3', optdesc='8khz',
     dist : `xarray.Dataset`
         FSM data.
     """
+    if isinstance(coords, str):
+        coords = [coords]
     
-    # Select only the
+    # Select either magnetic field or position data
     if product in ('b', 'b-field'):
         product = 'b'
-        varformat = '_b_(bcs|dmpa|gse|gsm)_'
     elif product in ('r', 'ephemeris', 'state'):
         product = 'r'
-        varformat = '_r_(gse|gsm)_'
     else:
         raise ValueError('Invalid data product {0}. Choose from (b, r)'
                          .format(product))
+    if product == 'b':
+        coords += ['mag']
+    varformat = '_'+product+'_(' + '|'.join(coords) + ')_'
     
     # Load the data
     #   - R is concatenated along Epoch, but depends on Epoch_state

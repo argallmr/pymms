@@ -143,7 +143,7 @@ def rename(fgm_data, sc, instr, mode, level, product):
 
 def load_data(sc='mms1', instr='fgm', mode='srvy', level='l2',
               start_date=None, end_date=None, rename_vars=True,
-              product='b-field', **kwargs):
+              coords='gse', product='b-field', **kwargs):
     """
     Load FGM data.
     
@@ -172,8 +172,8 @@ def load_data(sc='mms1', instr='fgm', mode='srvy', level='l2',
         Start and end of the data interval.
     product : str
         Data product to be loaded ('b', 'b-field', 'ephemeris', 'state')
-    coords : str
-        Data coordinate system ('gse', 'gsm', 'dmpa', 'omb')
+    coords : str, list
+        Data coordinate system ('gse', 'gsm', 'dmpa', 'bcs')
     rename_vars : bool
         If true (default), rename the standard MMS variable names
         to something more memorable and easier to use.
@@ -190,17 +190,18 @@ def load_data(sc='mms1', instr='fgm', mode='srvy', level='l2',
     check_spacecraft(sc)
     mode = check_mode(mode)
     check_level(level, instr=instr)
+    if isinstance(coords, str):
+        coords = [coords]
     
-    # Select only the
+    # Select either magnetic field or position data
     if product in ('b', 'b-field'):
         product = 'b'
-        varformat = '_b_(bcs|dmpa|gse|gsm)_'
     elif product in ('r', 'ephemeris', 'state'):
         product = 'r'
-        varformat = '_r_(gse|gsm)_'
     else:
-        raise ValueError('Invalid data product {0}. Choose from {'b', 'r'}'
+        raise ValueError('Invalid data product {0}. Choose from (b, r)'
                          .format(product))
+    varformat = '_'+product+'_(' + '|'.join(coords) + ')_'
     
     # Load the data
     #   - R is concatenated along Epoch, but depends on Epoch_state
