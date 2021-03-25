@@ -1,4 +1,6 @@
+import xarray as xr
 from pymms.data import util
+from pymms.sdc import mrmms_sdc_api as api
 
 def rename(data, sc, mode, level, optdesc):
     '''
@@ -94,6 +96,21 @@ def load_data(sc='mms1', mode='srvy', level='l2', optdesc='efield',
     data = util.load_data(sc=sc, instr='edi', mode=mode, level=level,
                           optdesc=optdesc, start_date=start_date, 
                           end_date=end_date, **kwargs)
+    
+    # EDI generates empty efield files when in ambient mode. These files
+    # have a version number of '0.0.0' and get read in as empty datasets,
+    # which fail the concatenation in util.load_data. Remove the datasets
+    # associated with empty files and concatenate the datasets with data
+    if isinstance(data, list):
+        # Remove empty datasets
+        full_ds = []
+        data = [ds 
+                for ds in data
+                if api.parse_file_name(ds.attrs['filename'])[-1] != '0.0.0']
+        
+        # Concatenate again
+        data = xr.concat(data, dim='Epoch')
+    
     
     # Rename data variables to something simpler
     if rename_vars:
