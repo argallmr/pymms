@@ -1,4 +1,5 @@
 from pymms.sdc import mrmms_sdc_api as api
+from pymms.data import edp
 from . import fgm, edp
 import datetime as dt
 import numpy as np
@@ -1345,12 +1346,9 @@ def maxwellian_distribution(dist, N=None, bulkv=None, T=None, **kwargs):
     if T is None:
         T = temperature(dist, N=N, V=bulkv)
     
-    # Precondition
-    f = precondition(dist, **kwargs)
-    
-    phi = f['phi']
-    theta = f['theta']
-    velocity = np.sqrt(2.0 * eV2J / mass * f['energy'])  # m/s
+    phi = dist['phi']
+    theta = dist['theta']
+    velocity = np.sqrt(2.0 * eV2J / mass * dist['energy'])  # m/s
     
     vxsqr = (-velocity * np.sin(theta) * np.cos(phi) - (1e3*bulkv[:,0]))**2
     vysqr = (-velocity * np.sin(theta) * np.sin(phi) - (1e3*bulkv[:,1]))**2
@@ -1362,6 +1360,14 @@ def maxwellian_distribution(dist, N=None, bulkv=None, T=None, **kwargs):
                       / (2.0 * kB * eV2K * T))
              )
     f_out = f_out.drop('velocity_index')
+
+    # Note that all of the moments functions will attempt to precondition this
+    # distribution. All optional keywords to fpi.precondition should be turned
+    # off except E0. Two things that cannot be avoided are 1) the energy bins
+    # will be normalized and 2) phi and theta will be converted to radians. This
+    # means that phi, theta, and energy coordinates of the Maxwellian should be
+    # the same as the 
+    f_out = f_out.assign_coords(U=dist['U'])
     
     # If there is high energy extrapolation, the last velocity bin will be
     # infinity, making the Maxwellian distribution inf or nan (inf*0=nan).
@@ -1382,6 +1388,7 @@ def maxwellian_distribution(dist, N=None, bulkv=None, T=None, **kwargs):
                                 'the measured distribution function.')
     f_out.attrs['standard_name'] = 'maxwellian_distribution'
     f_out.attrs['units'] = 's^3/cm^6'
+    f_out.attrs['Energy_e0'] = dist.attrs['Energy_e0']
     
     return f_out
 
@@ -1618,11 +1625,84 @@ def precondition(dist, E0=100, E_low=10, E_high=None, scpot=None,
                                 U=U)
     
     # Include metadata
+    f_out.attrs = dist.attrs
     f_out.attrs['Energy_e0'] = E0
     f_out.attrs['Lower_energy_integration_limit'] = E_low
     f_out.attrs['Upper_energy_integration_limit'] = None
     return f_out
 
+
+def precond_params(sc, mode, level, optdesc,
+                   start_date, end_date,
+                   time=None):
+    '''
+    Gather parameters and data required to precondition the distribution
+    functions. Parameters are gathered from global attributes of the
+    corresponding FPI moments files and from the EDP spacecraft potential.
+    
+    Parameters
+    ----------
+    sc : str
+        Spacecraft ID: ('mms1', 'mms2', 'mms3', 'mms4')
+    mode : str
+        Instrument mode: ('fast', 'brst').
+    level : str
+        Data quality level.
+    optdesc : str
+        Optional descriptor: ('dis-dist' | 'des-dist')
+    start_date, end_date : `datetime.datetime`
+        Start and end of the data interval.
+    time : `xarray.DataArray`
+        Time that the spacecraft potential will be interpolated to
+    
+    Returns
+    -------
+    precond_kwargs : dict
+        Keywords accepted by the *precondition* function
+    '''
+    
+    
+    # Get the moments files
+    sdc = api.MrMMS_SDC_API(sc, 'fpi', mode, level,
+                            optdesc=optdesc[0:3]+'-moms',
+                            start_date=start_date, end_date=end_date)
+    files = sdc.download()
+    
+    # Read the global attributes containing integration parameters
+    cdf = cdfread.CDF(files[0])
+    E0 = cdf.attget('Energy_E0', entry=0)['Data']
+    E_low = cdf.attget('Lower_energy_integration_limit', entry=0)['Data']
+    E_high = cdf.attget('Upper_energy_integration_limit', entry=0)['Data']
+    low_E_extrap = cdf.attget('Low_energy_extrapolation', entry=0)['Data']
+    high_E_extrap = cdf.attget('High_energy_extrapolation', entry=0)['Data']
+    
+    
+    regex = re.compile('([0-9]+.[0-9]+)')
+    try:
+        E_high = float(regex.match(E_high).group(1))
+    except AttributeError:
+        if E_high == 'highest energy step':
+            E_high = None
+        else:
+            AttributeError('Unable to parse high energy integration limit: '
+                           '"{}"'.format(E_high))
+    
+    # Get the spacecraft potential
+    edp_mode = mode if mode == 'brst' else 'fast'
+    scpot = edp.load_scpot(sc=sc, mode=edp_mode,
+                           start_date=start_date, end_date=end_date)
+    if time is not None:
+        scpot = scpot['Vsc'].interp_like(time, method='nearest')
+    
+    # Extract the data so that it is acceptable by precondition()
+    precond_kwargs = {'E0': float(regex.match(E0).group(1)),
+                      'E_low': float(regex.match(E_low).group(1)),
+                      'E_high': E_high,
+                      'low_energy_extrapolation': True if (low_E_extrap == 'Enabled') else False,
+                      'high_energy_extrapolation': True if (high_E_extrap == 'Enabled') else False,
+                      'scpot': scpot}
+    
+    return precond_kwargs
 
 def species_to_mass(species):
     '''
@@ -1650,7 +1730,7 @@ def species_to_mass(species):
     return mass
 
 
-def density(dist, **kwargs):
+def density(dist):
     '''
     Calculate number density from a time series of 3D distribution function.
     
@@ -1658,8 +1738,6 @@ def density(dist, **kwargs):
     ----------
     dist : `xarray.DataArray`
         A time series of 3D distribution functions
-    \*\*kwargs : dict
-        Keywords accepted by the `precondition` function.
     
     Returns
     -------
@@ -1667,14 +1745,13 @@ def density(dist, **kwargs):
         Number density
     '''
     mass = species_to_mass(dist.attrs['species'])
-    f = precondition(dist, **kwargs)
     
     if dist.attrs['mode'] == 'brst':
-        N = xr.concat([density_3D(f1, mass, f.attrs['Energy_e0'])
-                       for f1 in f],
+        N = xr.concat([density_3D(f1, mass, dist.attrs['Energy_e0'])
+                       for f1 in dist],
                       'time')
     else:
-        N = density_4D(f, mass, f.attrs['Energy_e0'])
+        N = density_4D(dist, mass, dist.attrs['Energy_e0'])
     
     # Add metadata
     N.name = 'N{}'.format(dist.attrs['species'])
@@ -1687,7 +1764,7 @@ def density(dist, **kwargs):
     return N
 
 
-def entropy(dist, **kwargs):
+def entropy(dist):
     '''
     Calculate entropy from a time series of 3D velocity space
     distribution function.
@@ -1700,10 +1777,8 @@ def entropy(dist, **kwargs):
     
     Parameters
     ----------
-    dist : `xarray.DataArray`
+    f : `xarray.DataArray`
         A time series of 3D distribution functions
-    \*\*kwargs : dict
-        Keywords accepted by the `precondition` function.
     
     Returns
     -------
@@ -1712,14 +1787,12 @@ def entropy(dist, **kwargs):
     '''
     mass = species_to_mass(dist.attrs['species'])
     
-    f = precondition(dist, **kwargs)
-    
     if dist.attrs['mode'] == 'brst':
-        S = xr.concat([entropy_3D(f1, mass, f.attrs['Energy_e0'])
-                       for f1 in f],
+        S = xr.concat([entropy_3D(f1, mass, dist.attrs['Energy_e0'])
+                       for f1 in dist],
                       'time')
     else:
-        S = entropy_4D(f, mass, f.attrs['Energy_e0'])
+        S = entropy_4D(dist, mass, dist.attrs['Energy_e0'])
     
     S.name = 'S{}'.format(dist.attrs['species'])
     S.attrs['long_name'] = 'Velocity space entropy density'
@@ -1729,7 +1802,7 @@ def entropy(dist, **kwargs):
     return S
 
 
-def epsilon(dist, dist_max=None, N=None, V=None, T=None, **kwargs):
+def epsilon(dist, dist_max=None, N=None, V=None, T=None):
     '''
     Calculate epsilon [1]_ from a time series of 3D velocity space
     distribution functions.
@@ -1755,8 +1828,6 @@ def epsilon(dist, dist_max=None, N=None, V=None, T=None, **kwargs):
     T : `xarray.DataArray`
         Scalar temperature computed from `dist`. If not provided,
         it is calculated
-    \*\*kwargs : dict
-        Keywords accepted by the `precondition` function.
     
     Returns
     -------
@@ -1765,24 +1836,21 @@ def epsilon(dist, dist_max=None, N=None, V=None, T=None, **kwargs):
     '''
     mass = species_to_mass(dist.attrs['species'])
     if N is None:
-        N = density(dist, **kwargs)
+        N = density(dist)
     if dist_max is None:
         if V is None:
-            V = velocity(dist, N=N, **kwargs)
+            V = velocity(dist, N=N)
         if T is None:
-            T = temperature(dist, N=N, V=V, **kwargs)
+            T = temperature(dist, N=N, V=V)
             T = (T[:,0,0] + T[:,1,1] + T[:,2,2]) / 3.0
         dist_max = maxwellian_distribution(dist, N, V, T)
     
-    f = precondition(dist, **kwargs)
-    f_max = precondition(dist_max, **kwargs)
-    
     if dist.attrs['mode'] == 'brst':
-        e = xr.concat([epsilon_3D(f1, mass, f.attrs['Energy_e0'], f1_max, n1)
-                       for f1, f1_max, n1 in zip(f, f_max, N)],
+        e = xr.concat([epsilon_3D(f1, mass, dist.attrs['Energy_e0'], f1_max, n1)
+                       for f1, f1_max, n1 in zip(dist, dist_max, N)],
                       'time')
     else:
-        e = epsilon_4D(f, mass, f.attrs['Energy_e0'], f_max, N)
+        e = epsilon_4D(dist, mass, dist.attrs['Energy_e0'], dist_max, N)
     
     e.name = 'Epsilon{}'.format(dist.attrs['species'])
     e.attrs['long_name'] = 'Non-maxwellian'
@@ -1792,7 +1860,7 @@ def epsilon(dist, dist_max=None, N=None, V=None, T=None, **kwargs):
     return e
 
 
-def information_loss(dist_max, dist, N=None, T=None, **kwargs):
+def information_loss(dist_max, dist, N=None, T=None):
     '''
     Calculate entropy from a time series of 3D velocity space
     distribution function.
@@ -1811,8 +1879,6 @@ def information_loss(dist_max, dist, N=None, T=None, **kwargs):
         Number density computed from `dist`
     s : `xarray.DataArray`
         Entropy density computed from `dist`
-    \*\*kwargs : dict
-        Keywords accepted by the `precondition` function.
     
     Returns
     -------
@@ -1821,26 +1887,22 @@ def information_loss(dist_max, dist, N=None, T=None, **kwargs):
     '''
     mass = species_to_mass(dist.attrs['species'])
     if N is None:
-        N = density(f, **kwargs)
+        N = density(f)
     if T is None:
-        T = temperature(f, **kwargs)
-    
-    # f_M = precondition(dist_max, **kwargs)
-    f_M = dist_max
-    f = precondition(dist, **kwargs)
+        T = temperature(f)
     
     if dist.attrs['mode'] == 'brst':
         numerator = []
         denominator = []
-        for fm1, f1, n1, t1 in zip(f_M, f, N, T):
-            num, denom = information_loss_3D(fm1, f1, mass, f.attrs['Energy_e0'], n1, t1)
+        for fm1, f1, n1, t1 in zip(dist_max, dist, N, T):
+            num, denom = information_loss_3D(fm1, f1, mass, dist.attrs['Energy_e0'], n1, t1)
             numerator.append(num)
             denominator.append(denom)
         
         numerator = xr.concat(numerator, 'time')
         denominator = xr.concat(denominator, 'time')
     else:
-        numerator, denominator = information_loss_4D(f_M, f, mass, f.attrs['Energy_e0'], N, T)
+        numerator, denominator = information_loss_4D(f_max, dist, mass, dist.attrs['Energy_e0'], N, T)
     
     numerator.name = 'N{}'.format(dist.attrs['species'])
     numerator.attrs['long_name'] = 'Numerator of the kinetic information loss.'
@@ -1855,7 +1917,7 @@ def information_loss(dist_max, dist, N=None, T=None, **kwargs):
     return numerator, denominator
 
 
-def pressure(dist, N=None, T=None, **kwargs):
+def pressure(dist, N=None, T=None):
     '''
     Calculate pressure tensor from a time series of 3D velocity space
     distribution function.
@@ -1870,8 +1932,6 @@ def pressure(dist, N=None, T=None, **kwargs):
     T : `xarray.DataArray`
         Scalar temperature computed from `dist`. If not provided,
         it is calculated
-    \*\*kwargs : dict
-        Keywords accepted by the `precondition` function.
     
     Returns
     -------
@@ -1880,9 +1940,9 @@ def pressure(dist, N=None, T=None, **kwargs):
     '''
     mass = species_to_mass(dist.attrs['species'])
     if N is None:
-        N = density(dist, **kwargs)
+        N = density(dist)
     if T is None:
-        T = temperature(dist, N=N, **kwargs)
+        T = temperature(dist, N=N)
     
     P = pressure_4D(N, T)
     
@@ -1895,7 +1955,7 @@ def pressure(dist, N=None, T=None, **kwargs):
     return P
 
 
-def temperature(dist, N=None, V=None, **kwargs):
+def temperature(dist, N=None, V=None):
     '''
     Calculate the temperature tensor from a time series of 3D velocity
     space distribution function.
@@ -1910,8 +1970,6 @@ def temperature(dist, N=None, V=None, **kwargs):
     V : `xarray.DataArray`
         Bulk velocity computed from `dist`. If not provided,
         it is calculated
-    \*\*kwargs : dict
-        Keywords accepted by the `precondition` function.
     
     Returns
     -------
@@ -1920,18 +1978,16 @@ def temperature(dist, N=None, V=None, **kwargs):
     '''
     mass = species_to_mass(dist.attrs['species'])
     if N is None:
-        N = density(dist, **kwargs)
+        N = density(dist)
     if V is None:
-        V = velocity(dist, N=N, **kwargs)
-    
-    f = precondition(dist, **kwargs)
+        V = velocity(dist, N=N)
     
     if dist.attrs['mode'] == 'brst':
-        T = xr.concat([temperature_3D(f1, mass, f.attrs['Energy_e0'], n1, v1)
-                       for f1, n1, v1 in zip(f, N, V)],
+        T = xr.concat([temperature_3D(f1, mass, dist.attrs['Energy_e0'], n1, v1)
+                       for f1, n1, v1 in zip(dist, N, V)],
                       'time')
     else:
-        T = temperature_4D(f, mass, f.attrs['Energy_e0'], N, V)
+        T = temperature_4D(dist, mass, dist.attrs['Energy_e0'], N, V)
     
     T.name = 'T{0}'.format(dist.attrs['species'])
     T.attrs['species'] = dist.attrs['species']
@@ -1943,7 +1999,7 @@ def temperature(dist, N=None, V=None, **kwargs):
     return T
 
 
-def velocity(dist, N=None, **kwargs):
+def velocity(dist, N=None):
     '''
     Calculate velocity from a time series of 3D velocity space
     distribution functions.
@@ -1955,8 +2011,6 @@ def velocity(dist, N=None, **kwargs):
     N : `xarray.DataArray`
         Number density computed from `dist`. If not provided,
         it is calculated
-    \*\*kwargs : dict
-        Keywords accepted by the `precondition` function.
     
     Returns
     -------
@@ -1965,16 +2019,14 @@ def velocity(dist, N=None, **kwargs):
     '''
     mass = species_to_mass(dist.attrs['species'])
     if N is None:
-        N = density(dist, **kwargs)
-    
-    f = precondition(dist, **kwargs)
+        N = density(dist)
     
     if dist.attrs['mode'] == 'brst':
-        V = xr.concat([velocity_3D(f1, mass, f.attrs['Energy_e0'], n1)
-                       for f1, n1 in zip(f, N)],
+        V = xr.concat([velocity_3D(f1, mass, dist.attrs['Energy_e0'], n1)
+                       for f1, n1 in zip(dist, N)],
                       'time')
     else:
-        V = velocity_4D(f, mass, f.attrs['Energy_e0'], N)
+        V = velocity_4D(dist, mass, dist.attrs['Energy_e0'], N)
     
     V.name = 'V{}'.format(dist.attrs['species'])
     V.attrs['long_name'] = ('Bulk velocity calculated by integrating the '
@@ -1985,7 +2037,7 @@ def velocity(dist, N=None, **kwargs):
     return V
 
 
-def vspace_entropy(dist, N=None, s=None, **kwargs):
+def vspace_entropy(dist, N=None, s=None):
     '''
     Calculate entropy from a time series of 3D velocity space
     distribution function.
@@ -2004,8 +2056,6 @@ def vspace_entropy(dist, N=None, s=None, **kwargs):
         Number density computed from `dist`
     s : `xarray.DataArray`
         Entropy density computed from `dist`
-    \*\*kwargs : dict
-        Keywords accepted by the `precondition` function.
     
     Returns
     -------
@@ -2014,18 +2064,16 @@ def vspace_entropy(dist, N=None, s=None, **kwargs):
     '''
     mass = species_to_mass(dist.attrs['species'])
     if N is None:
-        N = density(dist, **kwargs)
+        N = density(dist)
     if s is None:
-        s = entropy(dist, **kwargs)
-    
-    f = precondition(dist, **kwargs)
+        s = entropy(dist)
     
     if dist.attrs['mode'] == 'brst':
-        sv = xr.concat([vspace_entropy_3D(f1, mass, f.attrs['Energy_e0'], n1, s1)
-                        for f1, n1, s1 in zip(f, N, s)],
+        sv = xr.concat([vspace_entropy_3D(f1, mass, dist.attrs['Energy_e0'], n1, s1)
+                        for f1, n1, s1 in zip(dist, N, s)],
                        'time')
     else:
-        sv = vspace_entropy_4D(f, mass, f.attrs['Energy_e0'], N, s)
+        sv = vspace_entropy_4D(dist, mass, dist.attrs['Energy_e0'], N, s)
     
     sv.name = 'sv{}'.format(dist.attrs['species'])
     sv.attrs['long_name'] = 'Velocity space entropy density'
@@ -2179,8 +2227,9 @@ def epsilon_3D(f, mass, E0, f_max, N):
     df = (np.sin(df['theta']) * df).integrate('theta')
     
     # Integrate energy
-    y = np.sqrt(df['U']) / (1-df['U'])**(5/2) * df
-    y[-1] = 0
+    with np.errstate(invalid='ignore', divide='ignore'):
+        y = np.sqrt(df['U']) / (1-df['U'])**(5/2) * df
+    y = y.where(np.isfinite(y), 0)
     
     epsilon = (1e3 * 2**(1/4) * eV2J**(3/4) * (E0 / mass)**(3/2) / N
                * y.integrate('U')
@@ -2667,8 +2716,9 @@ def epsilon_4D(f, mass, E0, f_max, N):
     df = (np.sin(df['theta']) * df).integrate('theta')
     
     # Integrate over Energy
-    y = np.sqrt(df['U']) / (1-df['U'])**(5/2) * df
-    y[:,-1] = 0
+    with np.errstate(invalid='ignore', divide='ignore'):
+        y = np.sqrt(df['U']) / (1-df['U'])**(5/2) * df
+    y = y.where(np.isfinite(y), 0)
     
     epsilon = (1e3 * 2**(1/4) * eV2J**(3/4) * (E0 / mass)**(3/2) / N
                * np.trapz(y, y['U'], axis=y.get_axis_num('energy_index'))
@@ -2718,10 +2768,10 @@ def information_loss_4D(f_M, f, mass, E0, N, T):
     #   - ln(0) = -inf; Zeros come from theta and y. Reset to zero
     #   - Photo-electron correction can result in negative phase space
     #     density. log(-1) = nan
-    y = (np.sqrt(f['U']) / (1 - f['U'])**(5/2))
-    y[:,-1,:] = 0
     with np.errstate(divide='ignore'):
+        y = (np.sqrt(f['U']) / (1 - f['U'])**(5/2))
         lnydy = np.log(y * np.sin(f['theta']) * dtheta * dphi)
+    y = y.where(np.isfinite(y), 0)
     lnydy = lnydy.where(np.isfinite(lnydy), 0)
     
     # Numerator

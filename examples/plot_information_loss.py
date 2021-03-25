@@ -15,47 +15,48 @@ def information_loss(sc, instr, mode, start_date, end_date):
     fpi_dist = fpi.load_dist(sc=sc, mode=mode, optdesc=instr+'-dist',
                              start_date=start_date, end_date=end_date)
     
-    # Integration limits
-    regex = re.compile('([0-9]+.[0-9]+)')
-    E0 = float(regex.match(fpi_moms.attrs['Energy_e0']).group(1))
-    E_low = float(regex.match(fpi_moms.attrs['Lower_energy_integration_limit']).group(1))
-    
-    # Spacecraft potential correction
-    edp_mode = mode if mode == 'brst' else 'fast'
-    scpot = edp.load_scpot(sc, edp_mode, t0, t1)
-    scpot = scpot.interp_like(fpi_moms, method='nearest')
-    
-    moms_kwargs = {'E0': E0,
-                   'E_low': E_low,
-                   'scpot': scpot}
+    # Precondition the distributions
+    kwargs = fpi.precond_params(sc, mode, 'l2', instr+'-dist',
+                                start_date, end_date,
+                                time=fpi_dist['time'])
+    f = fpi.precondition(fpi_dist['dist'], **kwargs)
     
     # Calculate moments
     #  - Use calculated moments for the Maxwellian distribution
-    N = fpi.density(fpi_dist['dist'], **moms_kwargs)
-    V = fpi.velocity(fpi_dist['dist'], N=N, **moms_kwargs)
-    T = fpi.temperature(fpi_dist['dist'], N=N, V=V, **moms_kwargs)
-    P = fpi.pressure(fpi_dist['dist'], N=N, T=T, **moms_kwargs)
+    N = fpi.density(f)
+    V = fpi.velocity(f, N=N)
+    T = fpi.temperature(f, N=N, V=V)
+    P = fpi.pressure(f, N=N, T=T)
     t = ((T[:,0,0] + T[:,1,1] + T[:,2,2]) / 3.0).drop(['t_index_dim1', 't_index_dim2'])
     p = ((P[:,0,0] + P[:,1,1] + P[:,2,2]) / 3.0).drop(['t_index_dim1', 't_index_dim2'])
-    max_dist = fpi.maxwellian_distribution(fpi_dist['dist'], N=N, bulkv=V, T=t)
-
+    f_max = fpi.maxwellian_distribution(f, N=N, bulkv=V, T=t)
+    
     # Maxwellian Entropy
     sMm = fpi.maxwellian_entropy(fpi_moms['density'], fpi_moms['p'])
     sMi = fpi.maxwellian_entropy(N, p)
-    sMd = fpi.entropy(max_dist, E_low=0) #, E0=E0, E_low=E_low)
-    sMd_Vsc = fpi.entropy(max_dist, **moms_kwargs)
+    sMd = fpi.entropy(f_max)
     
     # Velocity space entropy
-    s = fpi.entropy(fpi_dist['dist'], **moms_kwargs)
-    sV = fpi.vspace_entropy(fpi_dist['dist'], N=N, s=s, **moms_kwargs)
-    sVM = fpi.vspace_entropy(max_dist, N=N, s=sMd, E0=E0, E_low=E_low)
-    sVM_Vsc = fpi.vspace_entropy(max_dist, N=N, s=sMd_Vsc, **moms_kwargs)
+    #   - There are three options for calculating the v-space entropy of
+    #     the Maxwellian distribution: using
+    #        1) FPI integrated moments,
+    #        2) Custom moments of the measured distribution
+    #        3) Custom moments of the equivalent Maxwellian distribution
+    #     Because the Maxwellian is built with discrete v-space bins, its
+    #     density, velocity, and temperature do not match that of the
+    #     measured distribution on which it is based. If NiM is used, the
+    #     M-bar term will be negative, which is unphysical, so here we use
+    #     the density of the measured distribution and the entropy of the
+    #     equivalent Maxwellian.
+    s = fpi.entropy(f)
+    sV = fpi.vspace_entropy(f, N=N, s=s)
+    sVM = fpi.vspace_entropy(f_max, N=N, s=sMd)
     
-    MbarKP = 1e-6 * (sMd_Vsc - s) / (3/2 * kB * N)
-    Mbar1 = (sVM_Vsc - sV) / sVM_Vsc
+    MbarKP = 1e-6 * (sMd - s) / (3/2 * kB * N)
+    Mbar1 = (sVM - sV) / sVM
 
     # Calculate information loss
-    num, denom = fpi.information_loss(max_dist, fpi_dist['dist'], N=N, T=t, **moms_kwargs)
+    num, denom = fpi.information_loss(f_max, f, N=N, T=t)
     Mbar2 = (MbarKP - num) / denom
     
     fig, axes = plt.subplots(nrows=8, ncols=1, figsize=(6, 7), squeeze=False)
@@ -66,7 +67,6 @@ def information_loss(sc, instr, mode, start_date, end_date):
     sMm.plot(ax=ax, label='$s_{M,moms}$')
     sMi.plot(ax=ax, label='$s_{M,int}$')
     sMd.plot(ax=ax, label='$s_{M,f}$')
-    sMd_Vsc.plot(ax=ax, label='$s_{M,f,Vsc}$')
     ax.set_xlabel('')
     ax.set_xticklabels([])
     ax.set_ylabel('s\n(J/K/$cm^{3}$)')
@@ -77,7 +77,6 @@ def information_loss(sc, instr, mode, start_date, end_date):
     ax = axes[1,0]
     sV.plot(ax=ax, label='$s_{V}$')
     sVM.plot(ax=ax, label='$s_{M,V}$')
-    sVM_Vsc.plot(ax=ax, label='$s_{M,V,Vsc}$')
     ax.set_xlabel('')
     ax.set_xticklabels([])
     ax.set_ylabel('$s_{V}$\n(J/K/$cm^{3}$)')
