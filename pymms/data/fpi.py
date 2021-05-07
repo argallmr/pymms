@@ -7,6 +7,9 @@ import xarray as xr
 from scipy import constants
 import warnings
 
+# Maxwellian look-up table
+import pandas as pd
+
 #ePhoto_Downloader
 import re
 import requests
@@ -340,7 +343,7 @@ class ePhoto_Downloader(util.Downloader):
 class Distribution_Function():
     def __init__(self, f, phi, theta, energy, mass, time=None,
                  scpot=None, E0=100, E_low=None, E_high=None,
-                 wrap_phi=True, extrapolate_theta=True,
+                 wrap_phi=True, theta_extrapolation=True,
                  low_energy_extrapolation=True,
                  high_energy_extrapolation=True):
         
@@ -359,7 +362,7 @@ class Distribution_Function():
         
         self._is_preconditioned = False
         self.wrap_phi = wrap_phi
-        self.extrapolate_theta = extrapolate_theta
+        self.theta_extrapolation = theta_extrapolation
         self.high_energy_extrapolation = high_energy_extrapolation
         self.low_energy_extrapolation = low_energy_extrapolation
     
@@ -491,7 +494,7 @@ class Distribution_Function():
             f = np.append(f, f[np.newaxis, 0, :, :], axis=0)
         
         # Add endpoints at 0 and 180 degrees (sin(0,180) = 0)
-        if self.extrapolate_theta:
+        if self.theta_extrapolation:
             theta = np.deg2rad(np.append(np.append(0, theta), 180))
             f = np.append(np.zeros((f.shape[0], 1, f.shape[2])), f, axis=1)
             f = np.append(f, np.zeros((f.shape[0], 1, f.shape[2])), axis=1)
@@ -1359,6 +1362,8 @@ def maxwellian_distribution(dist, N=None, bulkv=None, T=None, **kwargs):
              * np.exp(-mass * (vxsqr + vysqr + vzsqr)
                       / (2.0 * kB * eV2K * T))
              )
+    
+    # 'velocity_index' is transferred to f_out from bulkv 
     f_out = f_out.drop('velocity_index')
 
     # Note that all of the moments functions will attempt to precondition this
@@ -1427,6 +1432,140 @@ def maxwellian_entropy(N, P):
     Sb.attrs['standard_name'] = 'Boltzmann_entropy'
     Sb.attrs['units'] = 'J/K/m^3 ln(s^3/m^6)'
     return Sb
+
+
+def maxwellian_lookup(dist, N_range, T_range, dims=(10, 10),
+                      fname=None):
+    '''
+    Create a look-up table of Maxwellian distributions based on density and
+    temperature.
+    
+    Parameters
+    ----------
+    dist : `xarray.DataSet`
+        An example 3D velocity distribution functions from which to take the
+        azimuthal and polar look direction, and the energy target
+        coordinates
+    N_range : tuple
+        Minimum and maximum values of number density (cm^-3) to use for the
+        look-up table.
+    T_range : tuple
+        Minimum and maximum values of scalar temperature (eV) to use for the
+        look-up table.
+    dims : tuple
+        Number of points between N_min and N_max, and T_min and T_max
+    fname : str, Path, or file-like
+        File name in which to save the look-up table
+    
+    Returns
+    -------
+    lookup_table : `xarray.DataArray`
+        A Maxwellian distribution at each value of N and T. Returned only if
+        *fname* is not specified.
+    '''
+    N = np.linspace(N_range[0], N_range[1], dims[0])
+    T = np.linspace(T_range[0], T_range[1], dims[1])
+    V = xr.DataArray(np.zeros((1,3)),
+                     dims=['time', 'velocity_index'],
+                     coords={'velocity_index': ['Vx', 'Vy', 'Vz']})
+    
+    # lookup_table = xr.zeros_like(dist.squeeze()).expand_dims({'N': N, 'T': T})
+    lookup_table = np.zeros((*dims, *np.squeeze(dist).shape))
+    n_lookup = np.zeros(dims)
+    v_lookup = np.zeros((*dims, 3))
+    t_lookup = np.zeros(dims)
+    s_lookup = np.zeros(dims)
+    sv_lookup = np.zeros(dims)
+    for idens, dens in enumerate(N):
+        for itemp, temp in enumerate(T):
+            f_max = maxwellian_distribution(dist, N=dens, bulkv=V, T=temp)
+            n = density(f_max)
+            v = velocity(f_max, N=n)
+            t = temperature(f_max, N=n, V=v)
+            s = entropy(f_max)
+            sv = vspace_entropy(f_max, N=n, s=s)
+            
+            lookup_table[idens, itemp, ...] = f_max.squeeze()
+            n_lookup[idens, itemp] = n
+            v_lookup[idens, itemp, :] = v
+            t_lookup[idens, itemp] = (t[0,0,0] + t[0,1,1] + t[0,2,2])/3.0
+            s_lookup[idens, itemp] = s
+            sv_lookup[idens, itemp] = sv
+    
+    # Maxwellian density, velocity, and temperature are functions of input data
+    n = xr.DataArray(n_lookup,
+                     dims = ('N_data', 't_data'),
+                     coords = {'N_data': N,
+                               't_data': T})
+    V = xr.DataArray(v_lookup,
+                     dims = ('N_data', 't_data', 'v_index'),
+                     coords = {'N_data': N,
+                               't_data': T,
+                               'v_index': ['Vx', 'Vy', 'Vz']})
+    t = xr.DataArray(t_lookup,
+                     dims = ('N_data', 't_data'),
+                     coords = {'N_data': N,
+                               't_data': T})
+    
+    # delete duplicate data
+    del n_lookup, v_lookup, t_lookup
+    
+    # Create a look-up table with Maxwellian density and temperature as the
+    # coordinate space
+    n_grid, t_grid = np.meshgrid(N, T, indexing='ij')
+    midx = pd.MultiIndex.from_arrays([n_lookup, v_lookup], names=('n_max', 't_max'))
+    sN = xr.DataArray.from_series(pd.Series(n_grid.flatten(), index=midx))
+    sT = xr.DataArray.from_series(pd.Series(t_grid.flatten(), index=midx))
+    f = xr.DataArray(lookup_table,
+                     dims = ('n_max', 't_max', 'phi_index', 'theta', 'energy_index'),
+                     coords = {'n_max': n_lookup.flatten(),
+                               't_max': t_lookup.flatten(),
+                               'phi': dist['phi'].squeeze(),
+                               'theta': dist['theta'].squeeze(),
+                               'energy': dist['energy'].squeeze(),
+                               'U': dist['U'].squeeze()})
+    
+    
+    # The look-up table is a function of Maxwellian density, velocity, and
+    # temperature. This provides a mapping from measured data to discretized
+    # Maxwellian values
+    f = xr.DataArray(lookup_table,
+                     dims = ('N_data', 't_data', 'phi_index', 'theta', 'energy_index'),
+                     coords = {'N': n,
+                               'T': t,
+                               'phi': dist['phi'].squeeze(),
+                               'theta': dist['theta'],
+                               'energy': dist['energy'].squeeze(),
+                               'U': dist['U'].squeeze(),
+                               'N_data': N,
+                               't_data': T})
+    
+    s = xr.DataArray(s_lookup,
+                     dims = ('N_data', 't_data'),
+                     coords = {'N': n,
+                               'T': t,
+                               'N_data': N,
+                               't_data': T})
+    
+    sv = xr.DataArray(sv_lookup,
+                      dims = ('N_data', 't_data'),
+                      coords = {'N': n,
+                                'T': t,
+                                'N_data': N,
+                                't_data': T})
+    
+    # Delete duplicate data
+    del lookup_table, s_lookup, sv_lookup
+    
+    # Put everything into a dataset
+    ds = xr.Dataset({'N': n, 'V': V, 't': t, 
+                     'f': f, 's': s, 'sv': sv})
+    
+    if fname is None:
+        return ds
+    else:
+        ds.to_netcdf(path=fname)
+        return
 
 
 def moments(dist, moment, **kwargs):
