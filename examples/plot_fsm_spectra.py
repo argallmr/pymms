@@ -6,7 +6,7 @@ import util
 from pymms.data import fgm, scm, fsm
 
 
-def fsm_timeseries(sc, start_date, end_date):
+def fsm_spectra(sc, start_date, end_date):
     
     # FSM only has burst mode data
     mode = 'brst'
@@ -152,7 +152,7 @@ if __name__ == '__main__':
     t1 = dt.datetime.strptime(args.end_date, '%Y-%m-%dT%H:%M:%S')
     
     # Generate the figure
-    fig, axes = fsm_timeseries(args.sc, t0, t1)
+    fig, axes = fsm_spectra(args.sc, t0, t1)
     
     # Save to directory
     if args.dir is not None:
