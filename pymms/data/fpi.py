@@ -87,9 +87,9 @@ class ePhoto_Downloader(util.Downloader):
         initial_pos = 0
         
         # Download 
-        with open(local_fname, 'wb') as f:
+        with open(local_file, 'wb') as f:
             with tqdm(total=total_size, unit='B', unit_scale=True,
-                      desc=remote_fname, initial=initial_pos,
+                      desc=remote_file, initial=initial_pos,
                       ascii=True) as pbar:
                     
                 for chunk in r.iter_content(chunk_size=1024):
@@ -1492,6 +1492,7 @@ def maxwellian_lookup(dist, N_range, T_range, dims=(10, 10),
             s_lookup[idens, itemp] = s
             sv_lookup[idens, itemp] = sv
     
+    
     # Maxwellian density, velocity, and temperature are functions of input data
     n = xr.DataArray(n_lookup,
                      dims = ('N_data', 't_data'),
@@ -1509,21 +1510,6 @@ def maxwellian_lookup(dist, N_range, T_range, dims=(10, 10),
     
     # delete duplicate data
     del n_lookup, v_lookup, t_lookup
-    
-    # Create a look-up table with Maxwellian density and temperature as the
-    # coordinate space
-    n_grid, t_grid = np.meshgrid(N, T, indexing='ij')
-    midx = pd.MultiIndex.from_arrays([n_lookup, v_lookup], names=('n_max', 't_max'))
-    sN = xr.DataArray.from_series(pd.Series(n_grid.flatten(), index=midx))
-    sT = xr.DataArray.from_series(pd.Series(t_grid.flatten(), index=midx))
-    f = xr.DataArray(lookup_table,
-                     dims = ('n_max', 't_max', 'phi_index', 'theta', 'energy_index'),
-                     coords = {'n_max': n_lookup.flatten(),
-                               't_max': t_lookup.flatten(),
-                               'phi': dist['phi'].squeeze(),
-                               'theta': dist['theta'].squeeze(),
-                               'energy': dist['energy'].squeeze(),
-                               'U': dist['U'].squeeze()})
     
     
     # The look-up table is a function of Maxwellian density, velocity, and
@@ -1559,7 +1545,7 @@ def maxwellian_lookup(dist, N_range, T_range, dims=(10, 10),
     
     # Put everything into a dataset
     ds = xr.Dataset({'N': n, 'V': V, 't': t, 
-                     'f': f, 's': s, 'sv': sv})
+                     's': s, 'sv': sv, 'f': f})
     
     if fname is None:
         return ds
