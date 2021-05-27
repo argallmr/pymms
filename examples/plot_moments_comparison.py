@@ -1,11 +1,13 @@
-import util
-from pymms.data import fpi, edp
+import re
 from matplotlib import pyplot as plt
 from matplotlib import dates as mdates
 
+import util
+from pymms.data import fpi, edp
 
-def compare_moments(sc, mode, species, start_date, end_date,
-                    scpot_correction=False, ephoto_correction=False):
+def moments_comparison(sc, mode, species, start_date, end_date,
+                       scpot_correction=False, ephoto_correction=False,
+                       elimits=False):
     '''
     Compare moments derived from the 3D velocity distribution functions
     from three sources: official FPI moments, derived herein, and those
@@ -26,6 +28,8 @@ def compare_moments(sc, mode, species, start_date, end_date,
         Apply spacecraft potential correction to the distribution functions.
     ephoto : bool
         Subtract photo-electrons. Applicable to DES data only.
+    elimits : bool
+        Set upper and lower energy limits of integration
     
     Returns
     -------
@@ -34,59 +38,49 @@ def compare_moments(sc, mode, species, start_date, end_date,
     ax : list
         List of `matplotlib.pyplot.axes` objects
     '''
+    
     # Read the data
-    moms_xr = fpi.load_moms(sc=sc, mode=mode,
-                            optdesc='d'+species+'s-moms',
+    moms_xr = fpi.load_moms(sc=sc, mode=mode, optdesc='d'+species+'s-moms',
                             start_date=start_date, end_date=end_date)
-    dist_xr = fpi.load_dist(sc=sc, mode=mode,
-                            optdesc='d'+species+'s-dist',
+    dist_xr = fpi.load_dist(sc=sc, mode=mode, optdesc='d'+species+'s-dist',
                             start_date=start_date, end_date=end_date,
                             ephoto=ephoto_correction)
     
-    # Spacecraft potential correction
-    scpot = None
-    if scpot_correction:
-        edp_mode = mode if mode == 'brst' else 'fast'
-        scpot = edp.load_scpot(sc=sc, mode=edp_mode,
-                               start_date=start_date, end_date=end_date)
-        scpot = scpot.interp_like(moms_xr, method='nearest')
+    # Precondition the distributions
+    kwargs = fpi.precond_params(sc, mode, 'l2', 'dis-dist',
+                                start_date, end_date,
+                                time=dist_xr['time'])
+    if scpot_correction is False:
+        kwargs['scpot'] == None
+    if elimits is False:
+        kwargs['E_low'] = None
+        kwargs['E_high'] = None
+    f = fpi.precondition(dist_xr['dist'], **kwargs)
+    
+    # Moments distribution
+    n_xr = fpi.density(f)
+    s_xr = fpi.entropy(f)
+    v_xr = fpi.velocity(f, N=n_xr)
+    T_xr = fpi.temperature(f, N=n_xr, V=v_xr)
+    P_xr = fpi.pressure(f, N=n_xr, T=T_xr)
+    t_scalar_xr = (T_xr[:,0,0] + T_xr[:,1,1] + T_xr[:,2,2]) / 3.0
+    p_scalar_xr = (P_xr[:,0,0] + P_xr[:,1,1] + P_xr[:,2,2]) / 3.0
+    t_scalar_xr = t_scalar_xr.drop(['t_index_dim1', 't_index_dim2'])
+    p_scalar_xr = p_scalar_xr.drop(['t_index_dim1', 't_index_dim2'])
     
     # Create an equivalent Maxwellian distribution
-    max_xr = fpi.maxwellian_distribution(dist_xr['dist'],
-                                         moms_xr['density'],
-                                         moms_xr['velocity'],
-                                         moms_xr['t'])
-    
-    # Density
-    ni_xr = fpi.density(dist_xr['dist'], scpot=scpot)
-    ni_max_dist = fpi.density(max_xr, scpot=scpot)
-    
-    # Entropy
-    s_xr = fpi.entropy(dist_xr['dist'], scpot=scpot)
-    s_max_dist = fpi.entropy(max_xr, scpot=scpot)
-    s_max = fpi.maxwellian_entropy(moms_xr['density'], moms_xr['p'])
-    
-    # Velocity
-    v_xr = fpi.velocity(dist_xr['dist'], N=ni_xr, scpot=scpot)
-    v_max_dist = fpi.velocity(max_xr, N=ni_max_dist, scpot=scpot)
-    
-    # Temperature
-    T_xr = fpi.temperature(dist_xr['dist'], N=ni_xr, V=v_xr, scpot=scpot)
-    T_max_dist = fpi.temperature(max_xr, N=ni_max_dist, V=v_max_dist, scpot=scpot)
-    
-    # Pressure
-    P_xr = fpi.pressure(dist_xr['dist'], N=ni_xr, T=T_xr)
-    P_max_dist = fpi.pressure(max_xr, N=ni_max_dist, T=T_max_dist)
-    
-    # Scalar pressure
-    p_scalar_xr = (P_xr[:,0,0] + P_xr[:,1,1] + P_xr[:,2,2]) / 3.0
+    f_max_xr = fpi.maxwellian_distribution(f, n_xr, v_xr, t_scalar_xr)
+    n_max_dist = fpi.density(f_max_xr)
+    s_max_dist = fpi.entropy(f_max_xr)
+    s_max = fpi.maxwellian_entropy(n_xr, p_scalar_xr)
+    v_max_dist = fpi.velocity(f_max_xr, N=n_max_dist)
+    T_max_dist = fpi.temperature(f_max_xr, N=n_max_dist, V=v_max_dist)
+    P_max_dist = fpi.pressure(f_max_xr, N=n_max_dist, T=T_max_dist)
     p_scalar_max_dist = (P_max_dist[:,0,0] + P_max_dist[:,1,1] + P_max_dist[:,2,2]) / 3.0
-    
-    p_scalar_xr = p_scalar_xr.drop(['t_index_dim1', 't_index_dim2'])
     p_scalar_max_dist = p_scalar_max_dist.drop(['t_index_dim1', 't_index_dim2'])
     
     # Epsilon
-    e_xr = fpi.epsilon(dist_xr['dist'], dist_max=max_xr, N=ni_xr)
+    e_xr = fpi.epsilon(f, dist_max=f_max_xr, N=n_xr)
     
     nrows = 6
     ncols = 3
@@ -97,9 +91,9 @@ def compare_moments(sc, mode, species, start_date, end_date,
     # Density
     ax = axes[0,0]
     moms_xr['density'].attrs['label'] = 'moms'
-    ni_xr.attrs['label'] = 'dist'
-    ni_max_dist.attrs['label'] = 'max'
-    ax = util.plot([moms_xr['density'], ni_xr, ni_max_dist],
+    n_xr.attrs['label'] = 'dist'
+    n_max_dist.attrs['label'] = 'max'
+    ax = util.plot([moms_xr['density'], n_xr, n_max_dist],
                    ax=ax, labels=['moms', 'dist', 'max'],
                    xaxis='off', ylabel='N\n($cm^{-3}$)')
     
@@ -288,6 +282,11 @@ if __name__ == '__main__':
                         action='store_true'
                         )
                         
+    parser.add_argument('-L', '--limits',
+                        help='Use energy limits from moments file.',
+                        action='store_true'
+                        )
+                        
     group = parser.add_mutually_exclusive_group()
     group.add_argument('-d', '--dir',
                        type=str,
@@ -309,9 +308,10 @@ if __name__ == '__main__':
     t1 = dt.datetime.strptime(args.end_date, '%Y-%m-%dT%H:%M:%S')
     
     # Generate the figure
-    fig, axes = compare_moments(args.sc, args.mode, args.species, t0, t1,
-                                scpot_correction=args.scpot,
-                                ephoto_correction=args.ephoto)
+    fig, axes = moments_comparison(args.sc, args.mode, args.species, t0, t1,
+                                   scpot_correction=args.scpot,
+                                   ephoto_correction=args.ephoto,
+                                   elimits=args.limits)
     
     # Save to directory
     if args.dir is not None:
@@ -320,6 +320,8 @@ if __name__ == '__main__':
             optdesc += '-Vsc'
         if args.ephoto:
             optdesc += '-ephoto'
+        if args.limits:
+            optdesc += '-limits'
         
         if t0.date() == t1.date():
             fname = '_'.join((args.sc, 'd'+args.species+'s', args.mode, 'l2',

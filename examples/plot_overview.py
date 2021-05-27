@@ -187,13 +187,13 @@ def overview(sc, mode, start_date, end_date, **kwargs):
     
     fig.suptitle(sc.upper())
     plt.subplots_adjust(left=0.2, right=0.8, top=0.95, hspace=0.2)
-#    plt.setp(axes, xlim=xlim)
     return fig, axes
 
 
 if __name__ == '__main__':
     import argparse
     import datetime as dt
+    from os import path
     
     parser = argparse.ArgumentParser(
         description='Plot an overview of MMS data.'

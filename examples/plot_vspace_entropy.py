@@ -1,74 +1,83 @@
+import numpy as np
+import re
+from matplotlib import pyplot as plt
+
 import util
 from pymms.data import fgm, fpi, edp
-import numpy as np
-from matplotlib import pyplot as plt
 
 def vspace_entropy(sc, mode, start_date, end_date):
     
     # Read the data
-    b = fgm.load_data(sc=sc, mode=mode,
-                      start_date=start_date, end_date=end_date)
-    dis_moms = fpi.load_moms(sc=sc, mode=mode, optdesc='dis-moms',
+    b = fgm.load_data(sc, mode, start_date, end_date)
+    dis_moms = fpi.load_moms(sc, mode, optdesc='dis-moms',
                              start_date=start_date, end_date=end_date)
-    des_moms = fpi.load_moms(sc=sc, mode=mode, optdesc='des-moms',
+    des_moms = fpi.load_moms(sc, mode, optdesc='des-moms',
                              start_date=start_date, end_date=end_date)
-    dis_dist = fpi.load_dist(sc=sc, mode=mode, optdesc='dis-dist',
+    dis_dist = fpi.load_dist(sc, mode, optdesc='dis-dist',
                              start_date=start_date, end_date=end_date)
-    des_dist = fpi.load_dist(sc=sc, mode=mode, optdesc='des-dist',
+    des_dist = fpi.load_dist(sc, mode, optdesc='des-dist',
                              start_date=start_date, end_date=end_date)
     
-    # Philosopy
-    #   - For the Maxwellian distributions, use the FPI moments data
-    #     whenever possible
-    #   - For the integrated moments, do not mix them with FPI moments
+    # Precondition the distributions
+    dis_kwargs = fpi.precond_params(sc, mode, 'l2', 'dis-dist',
+                                    start_date, end_date,
+                                    time=dis_dist['time'])
+    des_kwargs = fpi.precond_params(sc, mode, 'l2', 'des-dist',
+                                    start_date, end_date,
+                                    time=des_dist['time'])
+    f_dis = fpi.precondition(dis_dist['dist'], **dis_kwargs)
+    f_des = fpi.precondition(des_dist['dist'], **des_kwargs)
     
-    # Equivalent Maxwellian distribution
-    dis_max_dist = fpi.maxwellian_distribution(dis_dist['dist'],
-                                               N=dis_moms['density'],
-                                               bulkv=dis_moms['velocity'],
-                                               T=dis_moms['t'])
-    des_max_dist = fpi.maxwellian_distribution(des_dist['dist'],
-                                               N=des_moms['density'],
-                                               bulkv=des_moms['velocity'],
-                                               T=des_moms['t'])
+    # Calculate moments
+    #  - Use calculated moments for the Maxwellian distribution
+    Ni = fpi.density(f_dis)
+    Vi = fpi.velocity(f_dis, N=Ni)
+    Ti = fpi.temperature(f_dis, N=Ni, V=Vi)
+    Pi = fpi.pressure(f_dis, N=Ni, T=Ti)
+    ti = ((Ti[:,0,0] + Ti[:,1,1] + Ti[:,2,2]) / 3.0).drop(['t_index_dim1', 't_index_dim2'])
+    pi = ((Pi[:,0,0] + Pi[:,1,1] + Pi[:,2,2]) / 3.0).drop(['t_index_dim1', 't_index_dim2'])
     
-    # Spacecraft potential correction
-    edp_mode = mode if mode == 'brst' else 'fast'
-    scpot = edp.load_scpot(sc=sc, mode=edp_mode,
-                           start_date=start_date, end_date=end_date)
-    scpot_dis = scpot.interp_like(dis_moms, method='nearest')
-    scpot_des = scpot.interp_like(des_moms, method='nearest')
+    Ne = fpi.density(f_des)
+    Ve = fpi.velocity(f_des, N=Ne)
+    Te = fpi.temperature(f_des, N=Ne, V=Ve)
+    Pe = fpi.pressure(f_des, N=Ne, T=Te)
+    te = ((Te[:,0,0] + Te[:,1,1] + Te[:,2,2]) / 3.0).drop(['t_index_dim1', 't_index_dim2'])
+    pe = ((Pe[:,0,0] + Pe[:,1,1] + Pe[:,2,2]) / 3.0).drop(['t_index_dim1', 't_index_dim2'])
     
-    # Maxwellian entropy density
-    #   - Calculated from FPI moments to stick with philosophy
-#    si_dist = fpi.entropy(dis_dist, scpot=scpot_dis)
-#    se_dist = fpi.entropy(des_dist, scpot=scpot_des)
+    # Equivalent (preconditioned) Maxwellian distributions
+    # fi_max = fpi.maxwellian_distribution(f_dis, N=Ni, bulkv=Vi, T=ti)
+    # fe_max = fpi.maxwellian_distribution(f_des, N=Ne, bulkv=Ve, T=te)
+    fi_max = fpi.maxwellian_distribution(f_dis, N=Ni, bulkv=Vi, T=ti)
+    fe_max = fpi.maxwellian_distribution(f_des, N=Ne, bulkv=Ve, T=te)
     
-    si_max = fpi.maxwellian_entropy(dis_moms['density'], dis_moms['p'])
-    se_max = fpi.maxwellian_entropy(des_moms['density'], des_moms['p'])
+    # Analytically derived Maxwellian entropy density
+    # si_max = fpi.maxwellian_entropy(Ni, pi)
+    # se_max = fpi.maxwellian_entropy(Ne, pe)
+    si_max = fpi.entropy(fi_max)
+    se_max = fpi.entropy(fe_max)
     
     # Velocity space entropy density
-    siv_dist = fpi.vspace_entropy(dis_dist['dist'],
-#                                  N=dis_moms['density'],
-#                                  s=si_dist,
-                                  scpot=scpot_dis)
-    sev_dist = fpi.vspace_entropy(des_dist['dist'],
-#                                  N=des_moms['density'],
-#                                  s=se_dist,
-                                  scpot=scpot_des)
+    siv_dist = fpi.vspace_entropy(f_dis)
+    sev_dist = fpi.vspace_entropy(f_des)
     
-    siv_max = fpi.vspace_entropy(dis_max_dist,
-                                 N=dis_moms['density'],
-                                 s=si_max,
-                                 scpot=scpot_dis)
-    sev_max = fpi.vspace_entropy(des_max_dist,
-                                 N=des_moms['density'],
-                                 s=se_max,
-                                 scpot=scpot_des)
+    # The Maxwellian is already preconditioned
+    #   - There are three options for calculating the v-space entropy of
+    #     the Maxwellian distribution: using
+    #        1) FPI integrated moments,
+    #        2) Custom moments of the measured distribution
+    #        3) Custom moments of the equivalent Maxwellian distribution
+    #     Because the Maxwellian is built with discrete v-space bins, its
+    #     density, velocity, and temperature do not match that of the
+    #     measured distribution on which it is based. If NiM is used, the
+    #     M-bar term will be negative, which is unphysical, so here we use
+    #     the density of the measured distribution and the entropy of the
+    #     equivalent Maxwellian.
+    siv_max = fpi.vspace_entropy(fi_max, N=Ni, s=si_max)
+    sev_max = fpi.vspace_entropy(fe_max, N=Ne, s=se_max)
     
     # M-bar
-    miv_bar = np.abs(siv_max - siv_dist) / siv_max
-    mev_bar = np.abs(sev_max - sev_dist) / sev_max
+    miv_bar = (siv_max - siv_dist) / siv_max
+    mev_bar = (sev_max - sev_dist) / sev_max
     
     # Anisotropy
     Ai = dis_moms['temppara'] / dis_moms['tempperp'] - 1
@@ -99,7 +108,7 @@ def vspace_entropy(sc, mode, start_date, end_date):
     ax = axes[2,0]
     ax = util.plot([siv_max, siv_dist],
                    ax=ax, labels=['$s_{i,V,max}$', '$s_{i,V}$'],
-                   xaxis='off', ylabel='$s_{V}$\n$J/K/m^{3}$ $ln()$'
+                   xaxis='off', ylabel='$s_{V}$\n$J/K/m^{3}$'
                    )
     
     # Velocity space electron entropy density
@@ -119,14 +128,14 @@ def vspace_entropy(sc, mode, start_date, end_date):
     # Ion temperature
     ax = axes[5,0]
     ax = util.plot([dis_moms['temppara'], dis_moms['tempperp'], dis_moms['t']],
-                   ax=ax, labels=['$T_{\parallel}$', '$T_{\perp}$, $T$'],
+                   ax=ax, labels=['$T_{\parallel}$', '$T_{\perp}$', 'T'],
                    xaxis='off', ylabel='$T_{i}$\n(eV)'
                    )
     
     # Electron temperature
     ax = axes[6,0]
     ax = util.plot([des_moms['temppara'], des_moms['tempperp'], des_moms['t']],
-                   ax=ax, labels=['$T_{\parallel}$', '$T_{\perp}$, $T$'],
+                   ax=ax, labels=['$T_{\parallel}$', '$T_{\perp}$', 'T'],
                    xaxis='off', ylabel='$T_{e}$\n(eV)'
                    )
     
@@ -137,14 +146,14 @@ def vspace_entropy(sc, mode, start_date, end_date):
                    ylabel='A'
                    )
     
-    fig.suptitle('Plasma Parameters for Kinetic and Boltzmann Entropy')
+    fig.suptitle('Velocity Space Entropy')
     plt.subplots_adjust(left=0.2, right=0.85, top=0.95, hspace=0.4)
-#    plt.setp(axes, xlim=xlim)
     return fig, axes
 
 
 if __name__ == '__main__':
     import argparse
+    from os import path
     import datetime as dt
     
     # Define acceptable parameters
