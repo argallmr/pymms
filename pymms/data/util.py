@@ -605,6 +605,10 @@ def load_data(sc='mms1', instr='fgm', mode='srvy', level='l2',
     except Exception as E:
         return data
     
+    # cdf_to_df loads all of the data from the file. Now we need to trim to
+    # the time interval of interest
+    data = data.sel(indexers={rec_vname: slice(start_date, end_date)})
+    
     # Keep information about the data
     data.attrs['sc'] = sc
     data.attrs['instr'] = instr

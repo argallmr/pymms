@@ -103,14 +103,12 @@ def load_data(sc='mms1', mode='srvy', level='l2', optdesc='efield',
     # associated with empty files and concatenate the datasets with data
     if isinstance(data, list):
         # Remove empty datasets
-        full_ds = []
         data = [ds 
                 for ds in data
                 if api.parse_file_name(ds.attrs['filename'])[-1] != '0.0.0']
         
         # Concatenate again
         data = xr.concat(data, dim='Epoch')
-    
     
     # Rename data variables to something simpler
     if rename_vars:

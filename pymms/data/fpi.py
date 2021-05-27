@@ -1174,24 +1174,16 @@ def load_dist(sc='mms1', mode='fast', level='l2', optdesc='dis-dist',
         
         fpi_data[dist_vname] -= f_model
     
-    # Rename coordinates
-    #   - Phi is record varying in burst but not in survey data,
-    #     so the coordinates are different 
-    coord_rename_dict = {epoch_vname: 'time',
-                         phi_vname: 'phi',
-                         theta_vname: 'theta',
-                         energy_vname: 'energy',
-                         'energy': 'energy_index',
-                         dist_vname: 'dist'}
-    if mode == 'brst':
-        coord_rename_dict['phi'] = 'phi_index'
-    fpi_data = fpi_data.rename(coord_rename_dict)
-    
     # Select the appropriate time interval
-    fpi_data = fpi_data.sel(time=slice(start_date, end_date))
+    fpi_data = fpi_data.sel(Epoch=slice(start_date, end_date))
     
     # Adjust the time stamp
-    fpi_data = center_timestamps(fpi_data)
+    if center_times:
+        fpi_data = center_timestamps(fpi_data)
+    
+    # Rename coordinates
+    if rename_vars:
+        fpi_data = rename(fpi_data, sc, mode, optdesc)
     
     for name, value in fpi_data.items():
         value.attrs['sc'] = sc
