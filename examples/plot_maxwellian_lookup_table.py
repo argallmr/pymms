@@ -4,6 +4,7 @@ from pymms.data import fgm, fpi
 import numpy as np
 from matplotlib import pyplot as plt
 from matplotlib import cm
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 from pathlib import Path
 import xarray as xr
 
@@ -127,22 +128,47 @@ def maxwellian_lookup_table(sc, mode, species, start_date, end_date,
     
     # Create the figure
     fig = plt.figure(figsize=(6,7.5))
+    
+    # Figure positions
+    #   - Start with the position of a plot in the first row of a one-column
+    #     set of plots.
+    #   - Define the width and height spacing between each row
+    #   - The first row will actually be broken into two columns with a gap
+    #     between the first and second rows to allow for axis labels
+    #   - Subsequent plots will be offset from the first by multiples of
+    #     height and hspace
+    left, bottom, width, height = 0.15, 0.8, 0.7, 0.14
+    wspace, hspace, gap = 0.2, 0.02, 0.07
+    row1_width = 0.26
 
-    # Error in the look-up table
+    # Error in the look-up table density
     ax = fig.add_subplot(521)
-    img = dN.T.plot(ax=ax, cmap=cm.get_cmap('rainbow', 10))
+    img = dN.T.plot(ax=ax, cmap=cm.get_cmap('rainbow', 10), add_colorbar=False)
     ax.set_title('')
     ax.set_xlabel('N ($cm^{-3}$)')
     ax.set_ylabel('T (eV)')
-    cb = img.colorbar
+    ax.set_position((left, bottom, row1_width, height))
+    
+    # Create a colorbar that is aware of the image's new position
+    divider = make_axes_locatable(ax)
+    cax = divider.new_horizontal(size="5%", pad=0.1)
+    fig.add_axes(cax)
+    cb = fig.colorbar(img, cax=cax, orientation="vertical")
     cb.set_label('$\Delta N$ (%)')
 
+    # Error in the look-up table temperature
     ax = fig.add_subplot(522)
-    img = dt.T.plot(ax=ax, cmap=cm.get_cmap('rainbow', 10))
+    img = dt.T.plot(ax=ax, cmap=cm.get_cmap('rainbow', 10), add_colorbar=False)
     ax.set_title('')
     ax.set_xlabel('N ($cm^{-3}$)')
     ax.set_ylabel('T (eV)')
-    cb = img.colorbar
+    ax.set_position((left+row1_width+wspace, bottom, row1_width, height))
+    
+    # Create a colorbar that is aware of the image's new position
+    divider = make_axes_locatable(ax)
+    cax = divider.new_horizontal(size="5%", pad=0.1)
+    fig.add_axes(cax)
+    cb = fig.colorbar(img, cax=cax, orientation="vertical")
     cb.set_label('$\Delta T$ (%)')
 
     # Error in the adjusted look-up table
@@ -155,6 +181,7 @@ def maxwellian_lookup_table(sc, mode, species, start_date, end_date,
     ax.set_xticklabels([])
     ax.set_xlabel('')
     ax.set_ylabel('$\Delta N$ (%)')
+    ax.set_position((left, bottom-gap-height, width, height))
     leg = ax.legend(bbox_to_anchor=(1.05, 1),
                    borderaxespad=0.0,
                    frameon=False,
@@ -174,6 +201,7 @@ def maxwellian_lookup_table(sc, mode, species, start_date, end_date,
     ax.set_xticklabels([])
     ax.set_xlabel('')
     ax.set_ylabel('$\Delta t$ (%)')
+    ax.set_position((left, bottom-gap-2*height-hspace, width, height))
     leg = ax.legend(bbox_to_anchor=(1.05, 1),
                    borderaxespad=0.0,
                    frameon=False,
@@ -195,6 +223,7 @@ def maxwellian_lookup_table(sc, mode, species, start_date, end_date,
     ax.set_xticklabels([])
     ax.set_xlabel('')
     ax.set_ylabel('$\Delta$ s (%)')
+    ax.set_position((left, bottom-gap-3*height-2*hspace, width, height))
     leg = ax.legend(bbox_to_anchor=(1.05, 1),
                    borderaxespad=0.0,
                    frameon=False,
@@ -212,17 +241,18 @@ def maxwellian_lookup_table(sc, mode, species, start_date, end_date,
     l2 = dsv_adj.plot(ax=ax, label='$\Delta sv_{adj}$')
     ax.set_title('')
     ax.set_ylabel('$\Delta s_{V}$ (%)')
+    ax.set_position((left, bottom-gap-4*height-3*hspace, width, height))
     leg = ax.legend(bbox_to_anchor=(1.05, 1),
-                   borderaxespad=0.0,
-                   frameon=False,
-                   handlelength=0,
-                   handletextpad=0,
-                   loc='upper left')
+                    borderaxespad=0.0,
+                    frameon=False,
+                    handlelength=0,
+                    handletextpad=0,
+                    loc='upper left')
     for line, text in zip([l1[0], l2[0]], leg.get_texts()):
         text.set_color(line.get_color())
 
     fig.suptitle('Error in Maxwellian')
-    plt.subplots_adjust(left=0.2, right=0.85, top=0.95, hspace=0.4)
+    # plt.subplots_adjust(left=0.2, right=0.85, top=0.95, hspace=0.4)
     
 #    plt.setp(axes, xlim=xlim)
     return fig, fig.axes
