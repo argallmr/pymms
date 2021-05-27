@@ -8,6 +8,18 @@ The format is based on `Keep a Changelog`_, and this project adheres to `Semanti
 .. _Semantic Versioning https://semver.org/spec/v2.0.0.html
 
 
+v0.4.5
+------
+Added
+^^^^^
+* Calculate and plot information loss terms in kinetic entropy
+* Create and plot a look-up table of Maxwellian distributions and moments, entropy, etc.
+
+Fixed
+^^^^^
+* Data is trimmed to requested data interval when loaded
+* Empty EDI files are discarded
+
 v0.4.4
 ------
 Added
