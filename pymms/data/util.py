@@ -510,7 +510,7 @@ def cdf_attget(cdf, da):
 
 def load_data(sc='mms1', instr='fgm', mode='srvy', level='l2',
               optdesc=None, start_date=None, end_date=None,
-              offline=False, record_dim=None, team_site=False,
+              offline=False, record_dim='Epoch', team_site=False,
               **kwargs):
     """
     Load MMS data.
@@ -583,8 +583,10 @@ def load_data(sc='mms1', instr='fgm', mode='srvy', level='l2',
     # assume that the time dimension is the leading dimension of the data
     # variables.
     if record_dim is None:
-        varnames = [name for name in data[0].data_vars]
-        rec_vname = data[0].data_vars[varnames[0]].dims[0]
+        # Find the first non-empty dataset
+        ds = next(ds for ds in data if len(ds) != 0)
+        varnames = [name for name in ds.data_vars]
+        rec_vname = ds[varnames[0]].dims[0]
     else:
         rec_vname = record_dim
     
