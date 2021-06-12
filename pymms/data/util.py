@@ -115,6 +115,19 @@ class Downloader():
         pass
 
 
+class CDFReadException(Exception):
+    """Base class for other CDF Read exceptions"""
+    pass
+
+class NoVariablesInFileError(CDFReadException):
+    """Raised when there are no variables in the file"""
+    pass
+
+class VariablesNotFoundError(CDFReadException):
+    """Raised when there are provided variables are not found in the file"""
+    pass
+    
+
 def cdf_to_df(cdf_files, cdf_vars, epoch='Epoch'):
     '''
     Read variables from CDF files into a dataframe
@@ -255,25 +268,7 @@ def cdf_to_ds(filename, variables=None, varformat=None, data_vars=True):
     # Open the CDF file
     cdf = cdfread.CDF(filename)
     
-    # Read the given variables
-    if variables is not None:
-        varnames = variables
-    
-    # Match regular expression(s)
-    elif varformat is not None:
-        if isinstance(varformat, str):
-            varformat = [varformat]
-        all_variables = cdf_varnames(cdf, data_vars=data_vars)
-        
-        varnames = []
-        for fmt in varformat:
-            regex = re.compile(fmt)
-            matches = [v for v in all_variables if bool(regex.search(v))]
-            varnames += matches
-    
-    # Select all (data) variables
-    else:
-        varnames = cdf_varnames(cdf, data_vars=data_vars)
+    varnames = check_variables(cdf, variables, varformat, data_vars)
     
     # Read the data
     for varname in varnames:
@@ -288,6 +283,70 @@ def cdf_to_ds(filename, variables=None, varformat=None, data_vars=True):
     ds.attrs.update(cdf.globalattsget())
     
     return ds
+
+
+def check_variables(cdf, variables, varformat, data_vars):
+    '''
+    Check the validity of the variable names to be read.
+    
+    Parameters
+    ----------
+    cdf : `cdflib.cdfread.CDF`
+        CDF file object
+    variables : str or list
+        Names of the variables to read or a pattern by which to match
+        variable names. If not given, all variables will be read
+    varformat : str or list
+        Regular expression(s) used to match variable names. Mutually
+        exclusive with `variables`.
+    data_vars : bool
+        Read only those variables with VAR_TYPE of "data". Ignored if
+        `variables` is given.
+    
+    Returns
+    -------
+    varnames : list
+        Valid variable names
+    '''
+    
+    # All of the variables in the file
+    all_variables = cdf_varnames(cdf, data_vars=data_vars)
+    if len(all_variables) == 0:
+        vartype = ''
+        if data_vars:
+            vartype = 'data '
+        raise NoVariablesInFileError('The file contains no {0}variables: '
+            '{1}'.format(vartype, cdf.cdf_info()['CDF']))
+
+    # Read the given variables
+    if variables is not None:
+        not_found = [v for v in variables if v not in all_variables]
+        if len(not_found) > 0:
+            raise VariablesNotFoundError('Variable names {0} not found '
+                'in file {1}'.format(not_found, cdf.cdf_info()['CDF']))
+        varnames = variables
+    
+    # Match regular expression(s)
+    elif varformat is not None:
+        if isinstance(varformat, str):
+            varformat = [varformat]
+        
+        varnames = []
+        for fmt in varformat:
+            regex = re.compile(fmt)
+            matches = [v for v in all_variables if bool(regex.search(v))]
+            varnames += matches
+        
+        if len(varnames) == 0:
+            raise VariablesNotFoundError('No variable names match {0}'
+                                         .format(varformat))
+    
+    # Select all (data) variables
+    else:
+        varnames = all_variables
+
+    
+    return varnames
 
 
 def cdf_load_var(cdf, varname):
@@ -515,6 +574,9 @@ def load_data(sc='mms1', instr='fgm', mode='srvy', level='l2',
     """
     Load MMS data.
     
+    Empty files are silently skipped. NoVariablesInFileError is raised only
+    if all files in time interval are empty.
+    
     Parameters
     ----------
     sc : str
@@ -572,36 +634,41 @@ def load_data(sc='mms1', instr='fgm', mode='srvy', level='l2',
     except IndexError:
         raise IndexError('No files found: {0}'.format(sdc))
     
-    # Concatenate data along the records (time) dimension, which
-    # should be equivalent to the DEPEND_0 variable name of the
-    # density variable.
+    # Read all of the data files. Skip empty files unless all files are empty
     data = []
     for file in files:
-        data.append(cdf_to_ds(file, **kwargs))
+        try:
+            data.append(cdf_to_ds(file, **kwargs))
+        except NoVariablesInFileError:
+            pass
+    if len(data) == 0:
+        raise NoVariablesInFileError('All {0} files were empty.'
+                                     .format(len(files)))
     
-    # Concatenate all datasets along the time dimension. If not given,
-    # assume that the time dimension is the leading dimension of the data
-    # variables.
+    # Determine the name of the record varying dimension. This should be the
+    # value of the DEPEND_0 attribute of a data variable.
     if record_dim is None:
-        # Find the first non-empty dataset
-        ds = next(ds for ds in data if len(ds) != 0)
-        varnames = [name for name in ds.data_vars]
-        rec_vname = ds[varnames[0]].dims[0]
+        varnames = [name for name in data[0].data_vars]
+        rec_vname = data[0][varnames[0]].dims[0]
     else:
         rec_vname = record_dim
     
     # Notes:
     # 1. Concatenation can fail if, e.g., a variable does not have a
-    # coordinate assigned along a given dimension. Instead of crashing,
-    # return the list of datasets so that they can be corrected and
-    # concatenated externally.
+    #    coordinate assigned along a given dimension. Instead of crashing,
+    #    return the list of datasets so that they can be corrected and
+    #    concatenated externally.
     #
     # 2. If data variables in the dataset do not have the dimension
-    # identified by rec_vname, a new dimension is added. If the dataset is
-    # large, this can cause xarray/python to use all available ram and
-    # crash. A fix would be to 1) find all DEPEND_0 variables, 2) use the
-    # data_vars='minimal' option to concat for each one, 3) combine the
-    # resulting datasets back together.
+    #    identified by rec_vname, a new dimension is added. If the dataset is
+    #    large, this can cause xarray/python to use all available ram and
+    #    crash. A fix would be to 1) find all DEPEND_0 variables, 2) use the
+    #    data_vars='minimal' option to concat for each one, 3) combine the
+    #    resulting datasets back together.
+    #
+    # 3. If there is only one dataset in the list and that dataset is empty
+    #    then xr.concat will return the dataset even if the dim=rec_vname is
+    #    not present.
     try:
         data = xr.concat(data, dim=rec_vname)
     except Exception as E:
