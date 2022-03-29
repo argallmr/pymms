@@ -550,11 +550,11 @@ class Distribution_Function():
         N = np.trapz(self._f, self._phi, axis=0)
         N = np.trapz(np.sin(self._theta[:, np.newaxis]) * N,
                      self._theta, axis=0)
-    
+
         with np.errstate(invalid='ignore', divide='ignore'):
             y = np.sqrt(self._U) / (1 - self._U)**(5/2)
         y = np.where(np.isfinite(y), y, 0)
-    
+
         N = coeff * np.trapz(y * N, self._U, axis=0)
 
         return N # 1/cm^3
@@ -827,7 +827,7 @@ def center_timestamps(fpi_data):
     t_delta = np.timedelta64(int(1e9 * (fpi_data['Epoch_plus_var'].data
                                         + fpi_data['Epoch_minus_var'].data)
                                  / 2.0), 'ns')
-    
+
     data = fpi_data.assign_coords({'Epoch': fpi_data['Epoch'] + t_delta})
     data['Epoch'].attrs = fpi_data.attrs
     data['Epoch_plus_var'] = t_delta
@@ -1173,7 +1173,7 @@ def load_dist(sc='mms1', mode='fast', level='l2', optdesc='dis-dist',
                    )
         
         fpi_data[dist_vname] -= f_model
-    
+
     # Select the appropriate time interval
     fpi_data = fpi_data.sel(Epoch=slice(start_date, end_date))
     
@@ -1192,7 +1192,7 @@ def load_dist(sc='mms1', mode='fast', level='l2', optdesc='dis-dist',
         value.attrs['level'] = level
         value.attrs['optdesc'] = optdesc
         value.attrs['species'] = optdesc[1]
-    
+
     return fpi_data
 
 
@@ -1229,7 +1229,14 @@ def load_moms(sc='mms1', mode='fast', level='l2', optdesc='dis-moms',
         Particle distribution function.
     """
     
+    
+    valid_optdesc = ('dis-moms', 'des-moms')
+    if optdesc not in valid_optdesc:
+        raise ValueError('OPDESC ({0}) must be in {1}'
+                         .format(optdesc, valid_optdesc))
+    
     # Check the inputs
+    instr = optdesc[0:3]
     check_spacecraft(sc)
     mode = check_mode(mode)
     if optdesc not in ('dis-moms', 'des-moms'):
@@ -1242,7 +1249,7 @@ def load_moms(sc='mms1', mode='fast', level='l2', optdesc='dis-moms',
                           optdesc=optdesc,
                           start_date=start_date, end_date=end_date,
                           **kwargs)
-    
+
     # Adjust time interval
     data = data.sel(Epoch=slice(start_date, end_date))
     
@@ -1276,6 +1283,94 @@ def load_moms(sc='mms1', mode='fast', level='l2', optdesc='dis-moms',
         value.attrs['species'] = optdesc[1]
     
     return data
+
+
+def load_moms_pd(sc, mode, species, start_date, end_date):
+    """
+    Load FPI moments as a Pandas DataFrame.
+    
+    Parameters
+    ----------
+    sc : str
+        Spacecraft ID: ('mms1', 'mms2', 'mms3', 'mms4')
+    mode : str
+        Instrument mode: ('fast', 'brst'). If 'srvy' is given, it is
+        automatically changed to 'fast'.
+    species : str
+        Particle species: ('i', 'e') for ions and electrons, respectively.
+    start_date, end_date : `datetime.datetime`
+        Start and end of the data interval.
+    
+    Returns
+    -------
+    moms : `pandas.DataFrame`
+        Moments of the distribution function.
+    """
+    
+    # Check the inputs
+    check_spacecraft(sc)
+    mode = check_mode(mode)
+    check_species(species)
+    
+    # File and variable name parameters
+    instr = 'd{0}s'.format(species)
+    optdesc = instr+'-moms'
+    n_vname = '_'.join((sc, instr, 'numberdensity', mode))
+    v_vname = '_'.join((sc, instr, 'bulkv', 'dbcs', mode))
+    p_vname = '_'.join((sc, instr, 'prestensor', 'dbcs', mode))
+    t_vname = '_'.join((sc, instr, 'temptensor', 'dbcs', mode))
+    q_vname = '_'.join((sc, instr, 'heatq', 'dbcs', mode))
+    t_para_vname = '_'.join((sc, instr, 'temppara', mode))
+    t_perp_vname = '_'.join((sc, instr, 'tempperp', mode))
+    varnames = [n_vname, v_vname, p_vname, t_vname, q_vname,
+                t_para_vname, t_perp_vname]
+    
+    # Download the data
+    sdc = api.MrMMS_SDC_API(sc, 'fpi', mode, 'l2',
+                            optdesc=optdesc,
+                            start_date=start_date,
+                            end_date=end_date)
+    fpi_files = sdc.download_files()
+    fpi_files = api.sort_files(fpi_files)[0]
+    
+    # Read the data from files
+    fpi_df = util.cdf_to_df(fpi_files, varnames)
+    
+    # Calculate Maxwellian Entropy
+    if maxwell_entropy:
+        data.append(mexwellian_entropy(data[0]))
+    
+    # Rename columns
+    fpi_df.rename(columns={n_vname: 'N'}, inplace=True)
+    fpi_df.rename(columns={t_para_vname: 'T_para'}, inplace=True)
+    fpi_df.rename(columns={t_perp_vname: 'T_perp'}, inplace=True)
+    util.rename_df_cols(fpi_df, v_vname, ('Vx', 'Vy', 'Vz'))
+    util.rename_df_cols(fpi_df, q_vname, ('Q_xx', 'Q_yy', 'Q_zz'))
+    util.rename_df_cols(fpi_df, t_vname,
+                        ('T_xx', 'T_xy', 'T_xz',
+                         'T_yx', 'T_yy', 'T_yz',
+                         'T_zx', 'T_zy', 'T_zz'
+                         ))
+    util.rename_df_cols(fpi_df, p_vname,
+                        ('P_xx', 'P_xy', 'P_xz',
+                         'P_yx', 'P_yy', 'P_yz',
+                         'P_zx', 'P_zy', 'P_zz'
+                         ))
+
+    # Drop redundant components of the pressure and temperature tensors
+    fpi_df.drop(columns=['T_yx', 'T_zx', 'T_zy',
+                         'P_yx', 'P_zx', 'P_zy'],
+                inplace=True
+                )
+    
+    # Scalar temperature and pressure
+    fpi_df['t'] = (fpi_df['T_xx'] + fpi_df['T_yy'] + fpi_df['T_zz'])/3.0
+    fpi_df['p'] = (fpi_df['P_xx'] + fpi_df['P_yy'] + fpi_df['P_zz'])/3.0
+    fpi_df.sc = sc
+    fpi_df.mode = mode
+    fpi_df.species = species
+    
+    return fpi_df
 
 
 def maxwellian_distribution(dist, N=None, bulkv=None, T=None, **kwargs):
@@ -1642,8 +1737,8 @@ def rename(data, sc, mode, optdesc):
                             e_labl_vname: 'energy'})
         
     return data
-    
-    
+
+
 def precondition(dist, E0=100, E_low=10, E_high=None, scpot=None,
                        wrap_phi=True, theta_extrapolation=True,
                        low_energy_extrapolation=True,
@@ -2729,11 +2824,11 @@ def vspace_entropy_3D(f, mass, E0, N, s):
     # Terms in that make up the velocity space entropy density
     sv1 = s # J/K/m^3 ln(s^3/m^6) -- Already multiplied by -kB
     sv2 = kB * (1e6*N) * np.log(1e6*N/coeff) # 1/m^3 * ln(1/m^3)
-    
+
     sv3 = (y * lnydy * f).integrate('phi')
     sv3 = (np.sin(f['theta']) * sv3).integrate('theta')
     sv3 = -1e12 * kB * coeff * sv3.integrate('U') # 1/m^3
-    
+
     sv4 = (y * f).integrate('phi')
     sv4 = (np.sin(f['theta']) * sv4).integrate('theta')
     sv4 = -1e12 * kB * coeff * Distribution_Function._trapz(sv4, sv4['U'])

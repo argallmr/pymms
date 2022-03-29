@@ -3,7 +3,7 @@ from pymms.data import fgm, fpi
 import numpy as np
 from matplotlib import pyplot as plt
 
-def entropy(sc, mode, start_date, end_date, **kwargs):
+def kinetic_entropy(sc, mode, start_date, end_date, **kwargs):
     
     # Read the data
     b = fgm.load_data(sc=sc, mode=mode,
@@ -222,19 +222,16 @@ if __name__ == '__main__':
     t0 = dt.datetime.strptime(args.start_date, '%Y-%m-%dT%H:%M:%S')
     t1 = dt.datetime.strptime(args.end_date, '%Y-%m-%dT%H:%M:%S')
     
-    fig, axes = entropy(args.sc, args.mode, t0, t1)
+    fig, axes = kinetic_entropy(args.sc, args.mode, t0, t1)
     
     # Save to directory
     if args.dir is not None:
-        optdesc = 's'
         if t0.date() == t1.date():
-            fname = '_'.join((args.sc, 'fpi', args.mode, 'l2',
-                              optdesc,
+            fname = '_'.join((args.sc, 'fpi', args.mode, 'l2', 'kinetic-entropy',
                               t0.strftime('%Y%m%d'), t0.strftime('%H%M%S'),
                               t1.strftime('%H%M%S')))
         else:
-            fname = '_'.join((args.sc, 'fpi', args.mode, 'l2',
-                              optdesc,
+            fname = '_'.join((args.sc, 'fpi', args.mode, 'l2', 'kinetic-entropy',
                               t0.strftime('%Y%m%d'), t0.strftime('%H%M%S'),
                               t1.strftime('%Y%m%d'), t1.strftime('%H%M%S')))
         plt.savefig(path.join(args.dir, fname + '.png'))

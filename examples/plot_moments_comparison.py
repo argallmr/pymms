@@ -78,7 +78,7 @@ def moments_comparison(sc, mode, species, start_date, end_date,
     P_max_dist = fpi.pressure(f_max_xr, N=n_max_dist, T=T_max_dist)
     p_scalar_max_dist = (P_max_dist[:,0,0] + P_max_dist[:,1,1] + P_max_dist[:,2,2]) / 3.0
     p_scalar_max_dist = p_scalar_max_dist.drop(['t_index_dim1', 't_index_dim2'])
-    
+
     # Epsilon
     e_xr = fpi.epsilon(f, dist_max=f_max_xr, N=n_xr)
     

@@ -242,15 +242,12 @@ if __name__ == '__main__':
     
     # Save to directory
     if args.dir is not None:
-        optdesc = 'overview'
         if t0.date() == t1.date():
-            fname = '_'.join((args.sc, 'instr', args.mode, 'l2',
-                              optdesc,
+            fname = '_'.join((args.sc, 'instr', args.mode, 'l2', 'overview',
                               t0.strftime('%Y%m%d'), t0.strftime('%H%M%S'),
                               t1.strftime('%H%M%S')))
         else:
-            fname = '_'.join((args.sc, 'instr', args.mode, 'l2',
-                              optdesc,
+            fname = '_'.join((args.sc, 'instr', args.mode, 'l2', 'overview',
                               t0.strftime('%Y%m%d'), t0.strftime('%H%M%S'),
                               t1.strftime('%Y%m%d'), t1.strftime('%H%M%S')))
         plt.savefig(path.join(args.dir, fname + '.png'))
