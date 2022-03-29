@@ -56,6 +56,7 @@ class MrMMS_SDC_API:
                  files=None,
                  offline=False,
                  optdesc=None,
+                 product=None,
                  site='public',
                  start_date=None,
                  version=None):
@@ -66,6 +67,7 @@ class MrMMS_SDC_API:
         self.site = site
 
         self.data_type = data_type
+        self.product = product
         self.end_date = end_date
         self.instr = instr
         self.level = level
@@ -860,6 +862,10 @@ class MrMMS_SDC_API:
             query['descriptor'] = self.optdesc \
                                   if isinstance(self.optdesc, str) \
                                   else ','.join(self.optdesc)
+        if self.product is not None:
+            query['product'] = self.product \
+                               if isinstance(self.product, str) \
+                               else ','.join(self.product)
         if self.version is not None:
             query['version'] = self.version if isinstance(self.version, str) \
                                             else ','.join(self.version)
@@ -2623,10 +2629,25 @@ def read_eva_fom_structure(sav_filename):
         d['discussion'] = [x.decode('utf-8') for x in fomstr.discussion[0]]
     except AttributeError:
         d['discussion'] = ['ABS Selections'] * len(d['start'])
+    # Some characters cannot be decoded. One example:
+    #   - b'CS edge B>5nT Vy,Vz 100km/s, diffB peak 6\xe0nA/m2, energetic particles, E waves'
+    except UnicodeDecodeError:
+        discussion = []
+        for x in fomstr.discussion[0]:
+            try:
+                discussion.append(x.decode('utf-8'))
+            except UnicodeDecodeError:
+                discussion.append(str(x))
+        d['discussion'] = discussion
+    
     try:
         d['note'] = fomstr.note[0].decode('utf-8')
     except AttributeError:
         d['note'] = 'ABS Selections'
+    # Some characters cannot be decoded. One example:
+    #   - MMS cros\x82\x93ed the magnetopause
+    except UnicodeDecodeError:
+        d['note'] = str(fomstr.note[0])
 
     # Convert TAI to datetime
     #   - timestaps are TAI seconds elapsed since 1958-01-01
@@ -2653,17 +2674,21 @@ def read_eva_fom_structure(sav_filename):
         tstop = []
         t_fom = [d['datetimestamps'][0]]
         fom = [0]
-        dtai_last = (d['timestamps'][d['numcycles']-1] -
-                     d['timestamps'][d['numcycles']-2])
-        dt_last = (d['datetimestamps'][d['numcycles']-1] -
-                   d['datetimestamps'][d['numcycles']-2])
+        dtai_last = (d['timestamps'][d['numcycles']-1]
+                     - d['timestamps'][d['numcycles']-2])
+        dt_last = (d['datetimestamps'][d['numcycles']-1]
+                   - d['datetimestamps'][d['numcycles']-2])
 
         # Extract the start and stop times of the FOM values
         # Create a time series for FOM values
+        #   - Indices 'start' and 'stop' are zero-based
+        #   - timestamps mark start time of each burst buffer
+        #   - Extend stop time to next timestamp to encompass the entire
+        #     burst interval
         for idx in range(d['nsegs']):
             taistarttime.append(d['timestamps'][d['start'][idx]])
             tstart.append(d['datetimestamps'][d['start'][idx]])
-            if d['stop'][idx] <= d['numcycles']-1:
+            if d['stop'][idx] < d['numcycles']-1:
                 taiendtime.append(d['timestamps'][d['stop'][idx]+1])
                 tstop.append(d['datetimestamps'][d['stop'][idx]+1])
             else:

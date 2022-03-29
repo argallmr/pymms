@@ -188,7 +188,7 @@ def load_data(sc='mms1', instr='fgm', mode='srvy', level='l2',
     
     # Check the inputs
     check_spacecraft(sc)
-    mode = check_mode(mode)
+    mode = check_mode(mode, level=level)
     check_level(level, instr=instr)
     if isinstance(coords, str):
         coords = [coords]

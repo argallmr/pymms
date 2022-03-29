@@ -1,10 +1,11 @@
 import datetime as dt
 import numpy as np
 import xarray as xr
-from matplotlib import pyplot as plt
-from pymms.data import fpi, edp
+from matplotlib import pyplot as plt, dates as mdates
 from scipy import constants
 import re
+from pymms.data import fpi, edp
+import util
 
 kB = constants.k # J/K
 
@@ -88,80 +89,99 @@ def information_loss(sc, instr, mode, start_date, end_date, lut_file):
             f_max[idx, ...] = lut['f'][irow, icol, ...]
     
     MbarKP = 1e-6 * (sM_dist - s) / (3/2 * kB * N)
+    MbarKP_sV = 1e-6 * (sVM - sV) / (3/2 * kB * N)
     Mbar1 = (sVM - sV) / sVM
 
-    # Calculate information loss
+    # Calculate information loss. Contains:
+    #   - a bias term in the numerator and
+    #   - a regularization term in the denominator
+    #   - (MbarKP - num) / denom --> R*(MbarKP + B)
     num, denom = fpi.information_loss(f_max, f, N=N, T=t)
     Mbar2 = (MbarKP - num) / denom
     
-    fig, axes = plt.subplots(nrows=8, ncols=1, figsize=(6, 7), squeeze=False)
+    fig, axes = plt.subplots(nrows=7, ncols=1, figsize=(4.5, 7), squeeze=False)
     
     # s
     ax = axes[0,0]
-    s.plot(ax=ax, label='s')
-    sM_moms.plot(ax=ax, label='$s_{M,moms}$')
-    sM_int.plot(ax=ax, label='$s_{M,int}$')
-    sM_dist.plot(ax=ax, label='$s_{M,f}$')
+    l1 = sM_dist.plot(ax=ax, label='$s_{M}$')
+    l2 = s.plot(ax=ax, label='s')
+#    l2 = sM_moms.plot(ax=ax, label='$s_{M,moms}$')
+#    l3 = sM_int.plot(ax=ax, label='$s_{M,int}$')
+#    l4 = sM_dist.plot(ax=ax, label='$s_{M,f}$')
     ax.set_xlabel('')
     ax.set_xticklabels([])
     ax.set_ylabel('s\n(J/K/$cm^{3}$)')
     ax.set_title('')
-    ax.legend()
+    util.format_axes(ax, xaxis='off')
+    util.add_legend(ax, [l1[0], l2[0]], outside=True)
     
     # sV
     ax = axes[1,0]
-    sV.plot(ax=ax, label='$s_{V}$')
-    sVM.plot(ax=ax, label='$s_{M,V}$')
+    l1 = sVM.plot(ax=ax, label='$s_{M,V}$')
+    l2 = sV.plot(ax=ax, label='$s_{V}$')
     ax.set_xlabel('')
     ax.set_xticklabels([])
     ax.set_ylabel('$s_{V}$\n(J/K/$cm^{3}$)')
     ax.set_title('')
-    ax.legend()
+    util.format_axes(ax, xaxis='off')
+    util.add_legend(ax, [l1[0], l2[0]], outside=True)
 
     ax = axes[2,0]
-    num.plot(ax=ax)
+    (-num).plot(ax=ax)
     ax.set_xlabel('')
     ax.set_xticklabels([])
-    ax.set_ylabel('Num')
+    ax.set_ylabel('$B_{cg}$')
     ax.set_title('')
+    util.format_axes(ax, xaxis='off')
 
     ax = axes[3,0]
     (1/denom).plot(ax=ax)
     ax.set_xlabel('')
     ax.set_xticklabels([])
-    ax.set_ylabel('1/Denom')
+    ax.set_ylabel('R')
     ax.set_title('')
+    util.format_axes(ax, xaxis='off')
 
     ax = axes[4,0]
-    (num/denom).plot(ax=ax)
+    (-num/denom).plot(ax=ax)
     ax.set_xlabel('')
     ax.set_xticklabels([])
-    ax.set_ylabel('Num/Denom')
+    ax.set_ylabel('$RB_{cg}$')
     ax.set_title('')
+    util.format_axes(ax, xaxis='off')
 
     ax = axes[5,0]
-    MbarKP.plot(ax=ax, label='$\overline{M}_{KP}$')
+    l1 = MbarKP_sV.plot(ax=ax, label='$\overline{M}_{KP,s_{V}}$')
+    l2 = MbarKP.plot(ax=ax, label='$\overline{M}_{KP,s}$')
     ax.set_xlabel('')
     ax.set_xticklabels([])
     ax.set_ylabel('$\overline{M}_{KP}$')
     ax.set_title('')
+    util.format_axes(ax, xaxis='off')
+    util.add_legend(ax, [l1[0], l2[0]], outside=True)
+
+#    ax = axes[6,0]
+#    Mbar1.plot(ax=ax, label='$\overline{M}_{1}$')
+#    ax.set_xlabel('')
+#    ax.set_xticklabels([])
+#    ax.set_ylabel('$\overline{M}_{1}$')
+#    ax.set_title('')
 
     ax = axes[6,0]
-    Mbar1.plot(ax=ax, label='$\overline{M}_{1}$')
+    l1 = Mbar1.plot(ax=ax, label='$\overline{M}_{1}$')
+    l2 = Mbar2.plot(ax=ax, label='$\overline{M}_{2}$')
     ax.set_xlabel('')
-    ax.set_xticklabels([])
-    ax.set_ylabel('$\overline{M}_{1}$')
+    ax.set_ylabel('$\overline{M}$')
     ax.set_title('')
-
-    ax = axes[7,0]
-    Mbar2.plot(ax=ax, label='$\overline{M}_{2}$')
-    ax.set_ylabel('$\overline{M}_{2}$')
-    ax.set_title('')
+    util.format_axes(ax)
+    util.add_legend(ax, [l1[0], l2[0]], outside=True)
+    
 
     fig.suptitle('$\overline{M}_{1} = (s_{V,M} - s_{V})/s_{V,M}$\n'
-                 '$\overline{M}_{2} = (\overline{M}_{KP} - Num)/Denom$')
-    plt.subplots_adjust(left=0.15, right=0.95, top=0.9, bottom=0.12, hspace=0.3)
+                 '$\overline{M}_{2} = R (\overline{M}_{KP} + B_{cg})$')
+    plt.subplots_adjust(left=0.17, right=0.86, top=0.9, bottom=0.12, hspace=0.3)
 
+    plt.setp(axes, xlim=mdates.date2num([start_date, end_date]))
     return fig, axes
 
 
@@ -214,6 +234,12 @@ if __name__ == '__main__':
                        help='Output file name',
                        )
                         
+    parser.add_argument('-e', '--extension',
+                        default='png',
+                        type=str,
+                        help='Output file type',
+                        )
+                        
     parser.add_argument('-n', '--no-show',
                         help='Do not show the plot.',
                         action='store_true')
@@ -237,7 +263,7 @@ if __name__ == '__main__':
             fname = '_'.join((args.sc, args.instr, args.mode, 'l2', 'info-loss',
                               t0.strftime('%Y%m%d'), t0.strftime('%H%M%S'),
                               t1.strftime('%Y%m%d'), t1.strftime('%H%M%S')))
-        plt.savefig(path.join(args.dir, fname + '.png'))
+        plt.savefig(path.join(args.dir, fname + '.' + args.extension))
     
     # Save to file
     if args.filename is not None:

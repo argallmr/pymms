@@ -1,9 +1,11 @@
 from cdflib import cdfread, epochs
 from pymms.sdc import mrmms_sdc_api as api
 import pandas as pd
+from scipy.stats import binned_statistic
 import xarray as xr
 import numpy as np
 import re
+import warnings
 
 # Note used
 import pathlib
@@ -126,7 +128,7 @@ class NoVariablesInFileError(CDFReadException):
 class VariablesNotFoundError(CDFReadException):
     """Raised when there are provided variables are not found in the file"""
     pass
-    
+
 
 def cdf_to_df(cdf_files, cdf_vars, epoch='Epoch'):
     '''
@@ -403,7 +405,7 @@ def cdf_load_var(cdf, varname):
     da = xr.DataArray(data,
                       dims=dims,
                       coords=coords)
-    
+
     # Indicate that the variable has been read.
     cdf_vars_read[varname] = da
     
@@ -570,7 +572,7 @@ def cdf_attget(cdf, da):
 def load_data(sc='mms1', instr='fgm', mode='srvy', level='l2',
               optdesc=None, start_date=None, end_date=None,
               offline=False, record_dim='Epoch', team_site=False,
-              **kwargs):
+              data_type='science', **kwargs):
     """
     Load MMS data.
     
@@ -598,6 +600,8 @@ def load_data(sc='mms1', instr='fgm', mode='srvy', level='l2',
         variable will be used.
     team_site : bool
         If True, search the password-protected team site
+    data_type : str
+        Type of data to download. ('science', 'hk', 'ancillary')
     \*\*kwargs : dict
         Keywords passed to *cdf_to_ds*
     
@@ -622,6 +626,7 @@ def load_data(sc='mms1', instr='fgm', mode='srvy', level='l2',
                             optdesc=optdesc,
                             start_date=start_date,
                             end_date=end_date,
+                            data_type=data_type,
                             offline=offline)
     
     # The data level parameter will automatically set the site keyword.
@@ -671,12 +676,15 @@ def load_data(sc='mms1', instr='fgm', mode='srvy', level='l2',
     #    not present.
     try:
         data = xr.concat(data, dim=rec_vname)
-    except Exception as E:
+    except (MemoryError, Exception) as E:
         return data
     
     # cdf_to_df loads all of the data from the file. Now we need to trim to
     # the time interval of interest
-    data = data.sel(indexers={rec_vname: slice(start_date, end_date)})
+    try:
+        data = data.sel(indexers={rec_vname: slice(start_date, end_date)})
+    except KeyError:
+        warnings.warn('{0} out unordered; cannot slice.'.format(rec_vname))
     
     # Keep information about the data
     data.attrs['sc'] = sc
