@@ -2,8 +2,7 @@ import util
 from pymms import config
 from pymms.data import fgm, fpi
 import numpy as np
-from matplotlib import pyplot as plt
-from matplotlib import cm
+from matplotlib import pyplot as plt, dates as mdates, cm
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from pathlib import Path
 import xarray as xr
@@ -142,119 +141,120 @@ def maxwellian_lookup_table(sc, mode, species, start_date, end_date,
     row1_width = 0.26
 
     # Error in the look-up table density
+    #   - Error is independent of density, so plot as 1D line plot
     ax = fig.add_subplot(521)
+    dN[0,:].plot(ax=ax)
+    ax.set_title('')
+    ax.set_xlabel('$T_{'+species+'}$ (eV)')
+    ax.set_ylabel('$\Delta n_{'+species+'}/n_{'+species+'}$ (%)')
+    ax.set_position((left, bottom, row1_width, height))
+    util.format_axes(ax, time=False)
+
+    '''
     img = dN.T.plot(ax=ax, cmap=cm.get_cmap('rainbow', 10), add_colorbar=False)
     ax.set_title('')
-    ax.set_xlabel('N ($cm^{-3}$)')
-    ax.set_ylabel('T (eV)')
-    ax.set_position((left, bottom, row1_width, height))
+    ax.set_xlabel('$n_{'+species+'}$ ($cm^{-3}$)')
+    ax.set_ylabel('$T_{'+species+'}$ (eV)')
     
     # Create a colorbar that is aware of the image's new position
     divider = make_axes_locatable(ax)
     cax = divider.new_horizontal(size="5%", pad=0.1)
     fig.add_axes(cax)
     cb = fig.colorbar(img, cax=cax, orientation="vertical")
-    cb.set_label('$\Delta N$ (%)')
+    cb.set_label('$\Delta n_{'+species+'}/n_{'+species+'}$ (%)')
+    cb.ax.minorticks_on()
+    '''
 
     # Error in the look-up table temperature
+    #   - Error is independent of density, so plot as 1D line plot
     ax = fig.add_subplot(522)
+    dt[0,:].plot(ax=ax)
+    ax.set_title('')
+    ax.set_xlabel('$T_{'+species+'}$ (eV)')
+    ax.set_ylabel('$\Delta T_{'+species+'}/T_{'+species+'}$ (%)')
+    ax.set_position((left+row1_width+wspace, bottom, row1_width, height))
+    util.format_axes(ax, time=False)
+    
+    '''
     img = dt.T.plot(ax=ax, cmap=cm.get_cmap('rainbow', 10), add_colorbar=False)
     ax.set_title('')
-    ax.set_xlabel('N ($cm^{-3}$)')
-    ax.set_ylabel('T (eV)')
+    ax.set_xlabel('$n_{'+species+'}$ ($cm^{-3}$)')
+    ax.set_ylabel('$T_{'+species+'}$ (eV)')
     ax.set_position((left+row1_width+wspace, bottom, row1_width, height))
+    util.format_axes(ax, time=False)
     
     # Create a colorbar that is aware of the image's new position
     divider = make_axes_locatable(ax)
     cax = divider.new_horizontal(size="5%", pad=0.1)
     fig.add_axes(cax)
     cb = fig.colorbar(img, cax=cax, orientation="vertical")
-    cb.set_label('$\Delta T$ (%)')
+    cb.set_label('$\Delta T_{'+species+'}/T_{'+species+'}$ (%)')
+    cb.ax.minorticks_on()
+    '''
 
     # Error in the adjusted look-up table
     dN_max = (N - N_max) / N * 100.0
     dN_adj = (N - N_lut) / N * 100.0
     ax = fig.add_subplot(512)
-    l1 = dN_max.plot(ax=ax, label='$\Delta N_{Max}$')
-    l2 = dN_adj.plot(ax=ax, label='$\Delta N_{adj}$')
+    l1 = dN_max.plot(ax=ax, label='$\Delta n_{'+species+',Max}/n_{'+species+',Max}$')
+    l2 = dN_adj.plot(ax=ax, label='$\Delta n_{'+species+',adj}/n_{'+species+',adj}$')
     ax.set_title('')
     ax.set_xticklabels([])
     ax.set_xlabel('')
-    ax.set_ylabel('$\Delta N$ (%)')
+    ax.set_ylabel('$\Delta n_{'+species+'}/n_{'+species+'}$ (%)')
     ax.set_position((left, bottom-gap-height, width, height))
-    leg = ax.legend(bbox_to_anchor=(1.05, 1),
-                   borderaxespad=0.0,
-                   frameon=False,
-                   handlelength=0,
-                   handletextpad=0,
-                   loc='upper left')
-    for line, text in zip([l1[0], l2[0]], leg.get_texts()):
-        text.set_color(line.get_color())
+    util.format_axes(ax, xaxis='off')
+    util.add_legend(ax, [l1[0], l2[0]], corner='SE', horizontal=True)
     
     # Deviation in temperature
     dt_max = (t - t_max) / t * 100.0
     dt_adj = (t - t_lut) / t * 100.0
     ax = fig.add_subplot(513)
-    l1 = dt_max.plot(ax=ax, label='$\Delta t_{Max}$')
-    l2 = dt_adj.plot(ax=ax, label='$\Delta t_{adj}$')
+    l1 = dt_max.plot(ax=ax, label='$\Delta T_{'+species+',Max}/T_{'+species+',Max}$')
+    l2 = dt_adj.plot(ax=ax, label='$\Delta T_{'+species+',adj}/T_{'+species+',adj}$')
     ax.set_title('')
     ax.set_xticklabels([])
     ax.set_xlabel('')
-    ax.set_ylabel('$\Delta t$ (%)')
+    ax.set_ylabel('$\Delta T_{'+species+'}/T_{'+species+'}$ (%)')
+    ax.set_ylim(-1,2.5)
     ax.set_position((left, bottom-gap-2*height-hspace, width, height))
-    leg = ax.legend(bbox_to_anchor=(1.05, 1),
-                   borderaxespad=0.0,
-                   frameon=False,
-                   handlelength=0,
-                   handletextpad=0,
-                   loc='upper left')
-    for line, text in zip([l1[0], l2[0]], leg.get_texts()):
-        text.set_color(line.get_color())
+    util.format_axes(ax, xaxis='off')
+    util.add_legend(ax, [l1[0], l2[0]], corner='NE', horizontal=True)
     
     # Deviation in entropy
     ds_moms = (s - s_max_moms) / s * 100.0
     ds_m = (s - s_max) / s * 100.0
     ds_adj = (s - s_lut) / s * 100.0
     ax = fig.add_subplot(514)
-    l1 = ds_m.plot(ax=ax, label='$\Delta s_{Max}$')
-    l2 = ds_adj.plot(ax=ax, label='$\Delta s_{adj}$')
-    l3 = ds_moms.plot(ax=ax, label='$\Delta s_{moms}$')
+    l1 = ds_m.plot(ax=ax, label='$\Delta s_{'+species+',Max}/s_{'+species+',Max}$')
+    l2 = ds_adj.plot(ax=ax, label='$\Delta s_{'+species+',adj}/s_{'+species+',adj}$')
+    l3 = ds_moms.plot(ax=ax, label='$\Delta s_{'+species+',moms}/s_{'+species+',moms}$')
     ax.set_title('')
     ax.set_xticklabels([])
     ax.set_xlabel('')
-    ax.set_ylabel('$\Delta$ s (%)')
+    ax.set_ylabel('$\Delta s_{'+species+'}/s_{'+species+'}$ (%)')
+    ax.set_ylim(-9,2.5)
     ax.set_position((left, bottom-gap-3*height-2*hspace, width, height))
-    leg = ax.legend(bbox_to_anchor=(1.05, 1),
-                   borderaxespad=0.0,
-                   frameon=False,
-                   handlelength=0,
-                   handletextpad=0,
-                   loc='upper left')
-    for line, text in zip([l1[0], l2[0], l3[0]], leg.get_texts()):
-        text.set_color(line.get_color())
+    util.format_axes(ax, xaxis='off')
+    util.add_legend(ax, [l1[0], l2[0], l3[0]], corner='SE', horizontal=True)
     
     # Deviation in velocity-space entropy
     dsv_max = (sv - sv_max) / sv * 100.0
     dsv_adj = (sv - sv_lut) / sv * 100.0
     ax = fig.add_subplot(515)
-    l1 = dsv_max.plot(ax=ax, label='$\Delta sv_{Max}$')
-    l2 = dsv_adj.plot(ax=ax, label='$\Delta sv_{adj}$')
+    l1 = dsv_max.plot(ax=ax, label='$\Delta s_{V,'+species+',Max}/s_{V,'+species+',Max}$')
+    l2 = dsv_adj.plot(ax=ax, label='$\Delta s_{V,'+species+',adj}/s_{V,'+species+',adj}$')
     ax.set_title('')
-    ax.set_ylabel('$\Delta s_{V}$ (%)')
+    ax.set_xlabel('')
+    ax.set_ylabel('$\Delta s_{V,'+species+'}/s_{V,'+species+'}$ (%)')
     ax.set_position((left, bottom-gap-4*height-3*hspace, width, height))
-    leg = ax.legend(bbox_to_anchor=(1.05, 1),
-                    borderaxespad=0.0,
-                    frameon=False,
-                    handlelength=0,
-                    handletextpad=0,
-                    loc='upper left')
-    for line, text in zip([l1[0], l2[0]], leg.get_texts()):
-        text.set_color(line.get_color())
+    util.format_axes(ax)
+    util.add_legend(ax, [l1[0], l2[0]], corner='SE', horizontal=True)
 
-    fig.suptitle('Error in Maxwellian')
-    # plt.subplots_adjust(left=0.2, right=0.85, top=0.95, hspace=0.4)
+    fig.suptitle('Maxwellian Look-up Table')
     
-#    plt.setp(axes, xlim=xlim)
+    plt.setp(fig.axes[2:], xlim=mdates.date2num([start_date, end_date]))
+
     return fig, fig.axes
 
 
@@ -290,6 +290,18 @@ if __name__ == '__main__':
                         help='Start date of the data interval: '
                              '"YYYY-MM-DDTHH:MM:SS""'
                         )
+    
+    parser.add_argument('-l', '--lookup',
+                        type=str,
+                        help='Path to Maxwellian look-up table'
+                        )
+                        
+    parser.add_argument('-m', '--minimization',
+                        type=str,
+                        choices=('both', 'N', 't', 'data'),
+                        default='both',
+                        help='Minimization scheme for look-up table.'
+                        )
                         
     group = parser.add_mutually_exclusive_group()
     group.add_argument('-d', '--dir',
@@ -302,19 +314,15 @@ if __name__ == '__main__':
                        help='Output file name'
                        )
                         
-    parser.add_argument('-m', '--minimization',
-                        help='Minimization scheme for look-up table. '
-                             'Options are ("N", "t", "both", "data")'
+    parser.add_argument('-e', '--extension',
+                        default='png',
+                        type=str,
+                        help='Output file type',
                         )
                         
     parser.add_argument('-n', '--no-show',
                         help='Do not show the plot.',
                         action='store_true')
-    
-    parser.add_argument('-l', '--lookup',
-                        type=str,
-                        help='Path to Maxwellian look-up table'
-                        )
 
     args = parser.parse_args()
     t0 = dt.datetime.strptime(args.start_date, '%Y-%m-%dT%H:%M:%S')
@@ -335,7 +343,7 @@ if __name__ == '__main__':
             fname = '_'.join((args.sc, 'fpi', args.mode, 'l2', optdesc,
                               t0.strftime('%Y%m%d'), t0.strftime('%H%M%S'),
                               t1.strftime('%Y%m%d'), t1.strftime('%H%M%S')))
-        plt.savefig(path.join(args.dir, fname + '.png'))
+        plt.savefig(path.join(args.dir, fname + '.' + args.extension))
     
     # Save to file
     if args.filename is not None:
