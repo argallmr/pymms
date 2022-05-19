@@ -7,6 +7,33 @@ The format is based on `Keep a Changelog`_, and this project adheres to `Semanti
 .. _Keep a Changelog https://keepachangelog.com/en/1.0.0/
 .. _Semantic Versioning https://semver.org/spec/v2.0.0.html
 
+v0.4.6
+------
+Added
+^^^^^
+* Precondition FPI distribution functions
+* Distribution function object
+* Maxwellian distribution look-up table
+* dss, anc, and epd modules
+* EDI module can load ambient data products, combine fast and slow modes, separate efield and amb loaders
+* Plotting utility functions for examples (axis formatting, colorbar, legend)
+
+Update
+^^^^^^
+* FPI load data function interface standardized
+* Examples: Information loss, Maxwellian look-up table, 
+* CDF reader is aware of empty files (particularly in the case of EDI)
+
+Fixed
+^^^^^
+* Typos in ePhoto_Downloader
+* Decode FOM discussion strings better
+* SDC API and data loader support ancillary data products better
+* FGM: keyword checks
+* DSS: ignore flags in sunpulse2phase
+* FPI: properly extract metadata from dis-moms files for photoelectron correction
+* ANC: file time is start (not end) time of interval
+
 
 v0.4.5
 ------
