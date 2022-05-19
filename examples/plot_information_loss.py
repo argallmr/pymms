@@ -60,7 +60,7 @@ def information_loss(sc, instr, mode, start_date, end_date, lut_file):
         #     M-bar term will be negative, which is unphysical, so here we use
         #     the density of the measured distribution and the entropy of the
         #     equivalent Maxwellian.
-        sVM = fpi.vspace_entropy(f_max, N=N, s=sMd)
+        sVM = fpi.vspace_entropy(f_max, N=N, s=sM_dist)
     
     # Use a look-up table for the Maxwellian parameters
     else:

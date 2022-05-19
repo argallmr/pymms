@@ -390,7 +390,7 @@ class ANCDownloader(util.Downloader):
         '''
         return (data_root / 'ancillary' / self.sc / self.product
                 / interval[0].strftime('%Y')
-                / interval[1].strftime('%m')
+                / interval[0].strftime('%m')
                 )
 
     @staticmethod

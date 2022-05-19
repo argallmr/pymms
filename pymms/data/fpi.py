@@ -969,9 +969,9 @@ def prep_ephoto(sdc, startdelphi, parity=None):
     # applied on a per-file basis
     for file in moms_files[1:]:
         cdf = cdfread.CDF(file)
-        if scl != cdf.attget('Photoelectron_model_scaling_factor'):
+        if scl != np.float(cdf.attget('Photoelectron_model_scaling_factor', entry=0)['Data']):
             raise ValueError('Scale factor changes between files.')
-        if fphe != cdf.attget('Photoelectron_model_filenames'):
+        if fphe != cdf.attget('Photoelectron_model_filenames', entry=0)['Data']:
             raise ValueError('Photoelectron mode file name changes.')
         cdf.close()
     

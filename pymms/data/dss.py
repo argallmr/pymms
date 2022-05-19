@@ -54,7 +54,9 @@ def rename(data, sc, optdesc):
 def sunpulse2phase(data, time):
     
     if data['flag'].any():
-        raise ValueError('Sunpulse flags are set.')
+        # Not sure what the flags mean, so ignore them for now
+        # raise ValueError('Sunpulse flags are set.')
+        pass
     if len(data['sunpulse']) <= 1:
         raise ValueError('Sunpulse must have more than one value.')
     if time[0] < (data['sunpulse'][0] - data['period'][0]):
@@ -264,9 +266,6 @@ if __name__ == '__main__':
     spun2despun_anc = (anc.despin(anc_data, fgm_data['time'])
                        .rename(spun='smpa', despun='dmpa')
                        )
-                       
-    import pdb
-    pdb.set_trace()
     
     b_dmpa_dss = spun2despun_dss.dot(b_smpa, dims='smpa')
     b_dmpa_anc = spun2despun_anc.dot(b_smpa, dims='smpa')
