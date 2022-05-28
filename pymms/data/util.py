@@ -411,9 +411,15 @@ def cdf_load_var(cdf, varname):
     
     # Create the variable
     da.name = varname
-    da.attrs['rec_vary'] = varinq['Rec_Vary']
     da.attrs['cdf_name'] = varinq['Variable']
     da.attrs['cdf_type'] = varinq['Data_Type_Description']
+    
+    # netCDF files cannot store boolean values, so convert to number
+    if isinstance(varinq['Rec_Vary'], bool):
+        da.attrs['rec_vary'] = np.int8(varinq['Rec_Vary'])
+    else:
+        raise ValueError('Rec_Vary is not boolean: {0}'
+                         .format(varinq['Rec_Vary']))
     
     # Read the metadata
     cdf_attget(cdf, da)
