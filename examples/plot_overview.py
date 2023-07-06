@@ -57,7 +57,7 @@ def overview(sc, mode, start_date, end_date, **kwargs):
 
     ax = axes[1,0]
     im = ax.pcolorfast(x0, x1, y, cmap='nipy_spectral')
-    ax.images.append(im)
+#    ax.images.append(im)
     ax.xaxis.set_major_locator(locator)
     ax.xaxis.set_major_formatter(formatter)
     ax.set_xticklabels([])
@@ -84,7 +84,7 @@ def overview(sc, mode, start_date, end_date, **kwargs):
 
     ax = axes[2,0]
     im = ax.pcolorfast(x0, x1, y, cmap='nipy_spectral')
-    ax.images.append(im)
+#    ax.images.append(im)
     ax.xaxis.set_major_locator(locator)
     ax.xaxis.set_major_formatter(formatter)
     ax.set_xticklabels([])
@@ -99,7 +99,6 @@ def overview(sc, mode, start_date, end_date, **kwargs):
                         borderpad=0)
     cb = plt.colorbar(im, cax=cbaxes, orientation='vertical')
     cb.set_label('$log_{10}$DEF')
-    
     
     # N
     ax = axes[3,0]

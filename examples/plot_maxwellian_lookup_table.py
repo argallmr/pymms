@@ -11,7 +11,31 @@ data_root = Path(config['dropbox_root'])
 
 def maxwellian_lookup_table(sc, mode, species, start_date, end_date,
                             lut_file=None, minimize='both'):
+    '''
+    Create Maxwellian look-up table and plot the difference bewtween the
+    measured distribution and the equivalent Maxwellian. A Maxwellian look-up
+    table consists of a 2D grid of Maxwellian distributions having a range of
+    densities and temperatures that span the density and temperature ranges of
+    the measured distribution functions. For each Maxwellian distribution in
+    the look-up table, we calculate the density and temperature and compare it
+    to the measured distribution function, from which the Maxwellians are based.
     
+    Parameters
+    ----------
+    sc : str
+        MMS spacecraft identifier: ('mms1', 'mms2', 'mms3', 'mms4')
+    mode : str
+        Data rate mode: ('srvy', 'brst')
+    species : str
+        Particle species: ('i', 'e') for ion or electron, respectively
+    start_date, end_date : `datetime.datetime`
+        Start and end times of the data interval
+    lut_file : str or path-like
+        Path to a previously generated look-up table file
+    minimize : str
+        The parameter to minimize when selecting the best Maxwellian
+        distribution: ('N', 't', 'both')
+    '''
     instr = 'fpi'
     level = 'l2'
     optdesc = 'd'+species+'s-dist'
@@ -61,7 +85,12 @@ def maxwellian_lookup_table(sc, mode, species, start_date, end_date,
     p_max = ((P_max[:,0,0] + P_max[:,1,1] + P_max[:,2,2]) / 3.0).drop(['t_index_dim1', 't_index_dim2'])
 
     # Create the lookup table of Maxwellian distributions if it does not exist
-    if not lut_file.exists():
+    if lut_file.exists():
+        print('Using Look-Up Table file:\n\t{0}'.format(lut_file))
+
+    else:
+        print('Creating Look-Up Table file:\n\t{0}'.format(lut_file))
+
         N_range = (0.9*N.min().values, 1.1*N.max().values)
         t_range = (0.9*t.min().values, 1.1*t.max().values)
         dims = (int(10**max(np.floor(np.abs(np.log10(N_range[1] - N_range[0]))), 1)),

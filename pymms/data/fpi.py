@@ -77,10 +77,23 @@ class ePhoto_Downloader(util.Downloader):
         self.optdesc = optdesc
     
     def download(self, filename):
-    
-        remote_file = model_url + '/' + fname
-        local_file = self.local_dir() / fname
+        '''
+        Download a photoelectron distribution file.
+
+        Parameters
+        ----------
+        filename : str
+            The name of the file with no path component
         
+        Returns
+        -------
+        local_file : `Path`
+            File path to the downloaded file
+        '''
+    
+        remote_file = model_url + '/' + filename
+        local_file = data_root / self.local_dir() / filename
+
         r = requests.get(remote_file, stream=True, allow_redirects=True)
         total_size = int(r.headers.get('content-length'))
         initial_pos = 0
@@ -172,14 +185,14 @@ class ePhoto_Downloader(util.Downloader):
         if version is None:
             filename = self.fname(stepper)
             version = filename.split('_')[5][1:]
-        file_path = self.local_path(stepper, version)
+        filename = self.local_path(stepper, version)
         
         # Download the file
-        if not file_path.exists():
-            filename = self.download(filename)
+        if not filename.exists():
+            filename = self.download(filename.name)
         
         # Load all of the data variables from the file
-        ds = util.cdf_to_ds(str(file_path))
+        ds = util.cdf_to_ds(str(filename))
         return ds
     
     def local_dir(self):
@@ -960,20 +973,18 @@ def prep_ephoto(sdc, startdelphi, parity=None):
     
     moms_files = api.sort_files(moms_files)[0]
     cdf = cdfread.CDF(moms_files[0])
-    scl = np.float(cdf.attget('Photoelectron_model_scaling_factor', entry=0)['Data'])
-    fphe = cdf.attget('Photoelectron_model_filenames', entry=0)['Data']
-    cdf.close()
+    scl = float(cdf.attget('Photoelectron_model_scaling_factor', entry=0).Data)
+    fphe = cdf.attget('Photoelectron_model_filenames', entry=0).Data
     
     # Check to see if the file name and scaling factor change
     # If it does, the implementation will have to change to be
     # applied on a per-file basis
     for file in moms_files[1:]:
         cdf = cdfread.CDF(file)
-        if scl != np.float(cdf.attget('Photoelectron_model_scaling_factor', entry=0)['Data']):
+        if scl != float(cdf.attget('Photoelectron_model_scaling_factor', entry=0).Data):
             raise ValueError('Scale factor changes between files.')
-        if fphe != cdf.attget('Photoelectron_model_filenames', entry=0)['Data']:
+        if fphe != cdf.attget('Photoelectron_model_filenames', entry=0).Data:
             raise ValueError('Photoelectron mode file name changes.')
-        cdf.close()
     
     # Extract the stepper number
     stepper = ePhoto_Downloader.fname_stepper(fphe)
@@ -1929,6 +1940,8 @@ def precond_params(sc, mode, level, optdesc,
         Keywords accepted by the *precondition* function
     '''
     
+    # FPI operates in fast/brst, not srvy
+    mode = check_mode(mode)
     
     # Get the moments files
     sdc = api.MrMMS_SDC_API(sc, 'fpi', mode, level,
@@ -1938,11 +1951,11 @@ def precond_params(sc, mode, level, optdesc,
     
     # Read the global attributes containing integration parameters
     cdf = cdfread.CDF(files[0])
-    E0 = cdf.attget('Energy_E0', entry=0)['Data']
-    E_low = cdf.attget('Lower_energy_integration_limit', entry=0)['Data']
-    E_high = cdf.attget('Upper_energy_integration_limit', entry=0)['Data']
-    low_E_extrap = cdf.attget('Low_energy_extrapolation', entry=0)['Data']
-    high_E_extrap = cdf.attget('High_energy_extrapolation', entry=0)['Data']
+    E0 = cdf.attget('Energy_E0', entry=0).Data
+    E_low = cdf.attget('Lower_energy_integration_limit', entry=0).Data
+    E_high = cdf.attget('Upper_energy_integration_limit', entry=0).Data
+    low_E_extrap = cdf.attget('Low_energy_extrapolation', entry=0).Data
+    high_E_extrap = cdf.attget('High_energy_extrapolation', entry=0).Data
     
     
     regex = re.compile('([0-9]+.[0-9]+)')
@@ -3091,6 +3104,59 @@ def pressure_4D(N, T):
     
     return P
 
+
+def relative_entropy_4D(f_M, f, mass, E0):
+    '''
+    Calculate relative velocity space entropy density from a time series of 3D
+    velocity space distribution functions.
+    
+    Notes
+    -----
+    The FPI fast survey velocity distribution functions are time-independent
+    (1D) in azimuth and polar angles but time-dependent (2D) in energy. The
+    `xarray.DataArray.integrate` function works only with 1D data (phi and
+    theta). For energy, we can use `numpy.trapz`.
+    
+    Parameters
+    ----------
+    f : `xarray.DataArray`
+        A preconditioned 3D time-dependent velocity distribution function
+    mass : float
+        Mass (kg) of the particle species represented in the distribution.
+    E0 : float
+        Energy used to normalize the energy bins to [0, inf)
+    
+    Returns
+    -------
+    sv : `xarray.DataArray`
+        Velocity space entropy density
+    '''
+    kB = constants.k # J/K
+    eV2J = constants.eV
+    
+    # Integrate over phi and theta
+    #   - Measurement bins with zero counts result in a
+    #     phase space density of 0
+    #   - Photo-electron correction can result in negative
+    #     phase space density.
+    #   - Log of value <= 0 is nan. Avoid be replacing
+    #     with 1 so that log(1) = 0
+    S = f / f_M
+    S = S.where(S > 0, 1)
+    S = (f * np.log(S)).integrate('phi')
+    S = (np.sin(S['theta']) * S).integrate('theta')
+    
+    # Integrate over Energy
+    with np.errstate(invalid='ignore', divide='ignore'):
+        y = np.sqrt(S['U']) / (1 - S['U'])**(5/2)
+    y = y.where(np.isfinite(y.values), 0)
+    
+    coeff = -kB * np.sqrt(2) * (eV2J * E0 / mass)**(3/2)
+    S = coeff * np.trapz(y * S, y['U'], axis=y.get_axis_num('energy_index'))
+    
+    S = xr.DataArray(S, dims='time', coords={'time': f['time']})
+
+    return S
 
 def temperature_4D(f, mass, E0, N, V):
     '''

@@ -225,11 +225,11 @@ def cdf_varnames(cdf, data_vars=True):
     varnames : list
         Variable names
     '''
-    varnames = cdf.cdf_info()['zVariables']
+    varnames = cdf.cdf_info().zVariables
     if data_vars:
         varnames = [varname
                     for varname in varnames
-                    if cdf.attget('VAR_TYPE', entry=varname)['Data'] == 'data'
+                    if cdf.attget('VAR_TYPE', entry=varname).Data == 'data'
                     ]
     return varnames
 
@@ -275,7 +275,6 @@ def cdf_to_ds(filename, variables=None, varformat=None, data_vars=True):
     # Read the data
     for varname in varnames:
         cdf_load_var(cdf, varname)
-    cdf.close()
     
     # Create the dataset
     ds = xr.Dataset(cdf_vars_read)
@@ -385,7 +384,7 @@ def cdf_load_var(cdf, varname):
     data = cdf.varget(variable=varname)
     
     # Convert epochs to datetimes
-    if varinq['Data_Type_Description'] in time_types:
+    if varinq.Data_Type_Description in time_types:
         try:
             data = np.asarray([np.datetime64(t)
                                for t in tepoch.to_datetime(data)])
@@ -397,29 +396,41 @@ def cdf_load_var(cdf, varname):
     # If the variable is not record varying, the "records" dimension
     # will be shallow and need to be removed so that data has the
     # same number of dimensions as dims has elements.
-    if not varinq['Rec_Vary']:
+    if not varinq.Rec_Vary:
         data = data.squeeze()
     
     dims, coords = cdf_var_dims(cdf, varname, len(data.shape))
     
-    da = xr.DataArray(data,
-                      dims=dims,
-                      coords=coords)
+    try:
+        da = xr.DataArray(data,
+                          dims=dims,
+                          coords=coords)
+    
+    # different number of dimensions on data and dims: 2 vs 1
+    except ValueError as E:
+        # There can be varinq['Num_Dims'] > 1 but varinq['DimVary'] = -1
+        # indicating that there is a shallow dimension. Do a simple check first.
+        if len(dims) != data.ndim:
+            da = xr.DataArray(data.squeeze(),
+                              dims=dims,
+                              coords=coords)
+        else:
+            raise E from None
 
     # Indicate that the variable has been read.
     cdf_vars_read[varname] = da
     
     # Create the variable
     da.name = varname
-    da.attrs['cdf_name'] = varinq['Variable']
-    da.attrs['cdf_type'] = varinq['Data_Type_Description']
+    da.attrs['cdf_name'] = varinq.Variable
+    da.attrs['cdf_type'] = varinq.Data_Type_Description
     
     # netCDF files cannot store boolean values, so convert to number
-    if isinstance(varinq['Rec_Vary'], bool):
-        da.attrs['rec_vary'] = np.int8(varinq['Rec_Vary'])
+    if isinstance(varinq.Rec_Vary, bool):
+        da.attrs['rec_vary'] = np.int8(varinq.Rec_Vary)
     else:
         raise ValueError('Rec_Vary is not boolean: {0}'
-                         .format(varinq['Rec_Vary']))
+                         .format(varinq.Rec_Vary))
     
     # Read the metadata
     cdf_attget(cdf, da)
@@ -502,7 +513,7 @@ def cdf_var_dims(cdf, varname, ndims):
         # DEPEND_# and LABL_PTR_# are pointers to other variables in the
         # CDF file. Read the data from those variables as the coordinate
         # values for this dimension.
-        if dim_name in cdf.cdf_info()['zVariables']:
+        if dim_name in cdf.cdf_info().zVariables:
             
             cdf_load_var(cdf, dim_name)
             coord_data = cdf_vars_read[dim_name]
@@ -544,7 +555,7 @@ def cdf_attget(cdf, da):
     varatts = cdf.varattsget(da.attrs['cdf_name'])
 
     # Get names of all cdf variables
-    cdf_varnames = cdf.cdf_info()['zVariables']
+    cdf_varnames = cdf.cdf_info().zVariables
 
     # Follow pointers to retrieve data
     #   - Some CDFs label the axis with the variable name.

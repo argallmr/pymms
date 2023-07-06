@@ -8,7 +8,7 @@ import requests
 from tqdm import tqdm
 
 from pymms.sdc import mrmms_sdc_api as api
-from pymms.data import util
+from pymms.data import util, hapgood
 from pymms import config
 
 data_root = Path(config['data_root'])
@@ -250,11 +250,13 @@ class ANCDownloader(util.Downloader):
     def fname(self, interval=None, sc=None, product=None,
               start_date=None, end_date=None, version=None):
         '''
-        Create the file name associated with a given interval.
+        Create the file name associated with a given interval. If `interval`
+        is provided, search the SDC for the latest files. Otherwise, build
+        a file name from the other keywords.
         
         Parameters
         ----------
-        interval : tuple of datetime.datetime
+        interval : (2) tuple of `datetime.datetime`
             Start and end time of the data interval
         
         Returns
@@ -274,6 +276,7 @@ class ANCDownloader(util.Downloader):
             # Return a single file name as a string
             if len(files) == 1:
                 files = files[0]
+            
             # Files are returned in reverse chronological order (newest to
             # oldest). Reverse it so that times are in-order when read.
             else:
@@ -284,8 +287,8 @@ class ANCDownloader(util.Downloader):
         # If the user wants to make their own file name.
         else:
             return '_'.join((sc, product,
-                             interval[0].strftime('%Y%j'),
-                             interval[1].strftime('%Y%j'),
+                             start_date.strftime('%Y%j'),
+                             end_date.strftime('%Y%j'),
                              version))
     
     def intervals(self):
@@ -463,6 +466,12 @@ class ANCDownloader(util.Downloader):
     def post(self, info_type, interval):
         '''
         Retrieve data from the SDC.
+        
+        Parameters
+        ----------
+        info_type : str
+            Type of information to retrieve: ('version_info', 'file_info',
+            'file_names', 'download')
 
         Returns
         -------
@@ -521,6 +530,11 @@ class ANCDownloader(util.Downloader):
 
         Parameters
         ----------
+        info_type : str
+            Type of information to retrieve: ('version_info', 'file_info',
+            'file_names', 'download')
+        interval : (2) tuple of `datetime.datetime`
+            Start and end of the data interval
         query : bool
             If True (default), add the query string to the url.
 
@@ -612,6 +626,16 @@ def interp_phase(phase, time):
     
     # Interpolate the phase to the given timestamps
     return phase.interp_like(time)
+
+
+def gei2despun(defatt, time, vector='P'):
+
+    # Unwrap the right ascension and declination angles
+    ra = interp_phase(defatt[vector].loc[:,'RA'], time)
+    dec = interp_phase(defatt[vector].loc[:,'Dec'], time)
+    
+    # Create the rotation to
+    return hapgood.gei2dsc(time.data, ra, dec)
 
 
 def despin(defatt, time, vector='L', offset=0.0, spinup=False):

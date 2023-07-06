@@ -46,12 +46,12 @@ setup(
                   "pymms.gls"],
       package_data = {'pymms': ['config_template.ini']},
       include_package_data = True,
-      install_requires = ["numpy>=1.8",
+      install_requires = ["numpy>=1.24",
                           "requests>=2.22.0",
                           "scipy>=1.4.1", 
                           "tqdm>=4.36.1",
-                          "cdflib >= 0.3.18",
-                          "matplotlib>=3.1.1"
+                          "cdflib>=1.0.0",
+                          "matplotlib>=3.4"
                           ],
       extras_require = {'data': ["cdflib >= 0.3.18",
                                  "xarray >= 0.16.0"],
