@@ -1415,17 +1415,17 @@ def maxwellian_distribution(dist, N=None, bulkv=None, T=None, **kwargs):
     if density is None:
         N = density(dist)
     if bulkv is None:
-        bulkv = velocity(dist, N=N)
+        bulkv = velocity(dist, n=N)
     if T is None:
-        T = temperature(dist, N=N, V=bulkv)
+        T = scalar_temperature(dist, n=N, V=bulkv)
     
     phi = dist['phi']
     theta = dist['theta']
-    velocity = np.sqrt(2.0 * eV2J / mass * dist['energy'])  # m/s
+    v_mag = np.sqrt(2.0 * eV2J / mass * dist['energy'])  # m/s
     
-    vxsqr = (-velocity * np.sin(theta) * np.cos(phi) - (1e3*bulkv[:,0]))**2
-    vysqr = (-velocity * np.sin(theta) * np.sin(phi) - (1e3*bulkv[:,1]))**2
-    vzsqr = (-velocity * np.cos(theta) - (1e3*bulkv[:,2]))**2
+    vxsqr = (-v_mag * np.sin(theta) * np.cos(phi) - (1e3*bulkv[:,0]))**2
+    vysqr = (-v_mag * np.sin(theta) * np.sin(phi) - (1e3*bulkv[:,1]))**2
+    vzsqr = (-v_mag * np.cos(theta) - (1e3*bulkv[:,2]))**2
     
     f_out = (1e-6 * N 
              * (mass / (2 * np.pi * kB * eV2K * T))**(3.0/2.0)
@@ -1751,9 +1751,9 @@ def rename(data, sc, mode, optdesc):
 
 
 def precondition(dist, E0=100, E_low=10, E_high=None, scpot=None,
-                       wrap_phi=True, theta_extrapolation=True,
-                       low_energy_extrapolation=True,
-                       high_energy_extrapolation=True):
+                 wrap_phi=True, theta_extrapolation=True,
+                 low_energy_extrapolation=True,
+                 high_energy_extrapolation=True):
     '''
     Before being sent to the integration routine, skymaps are preprocessed
     in the following manner:
@@ -2011,7 +2011,7 @@ def species_to_mass(species):
     return mass
 
 
-def density(dist):
+def density(f):
     '''
     Calculate number density from a time series of 3D distribution function.
     
@@ -2025,27 +2025,64 @@ def density(dist):
     N : `xarray.DataArray`
         Number density
     '''
-    mass = species_to_mass(dist.attrs['species'])
+    try:
+        E0 = f.attrs['Energy_e0']
+    except KeyError:
+        pass
+
+    eV2J = constants.eV
+    mass = species_to_mass(f.attrs['species'])
+
+    # Integrate over azimuth angle
+    try:
+        n = f.integrate('phi')
+    # In burst mode, phi is time-dependent
+    #   - Use trapz to explicitly specify which axis is being integrated
+    #   - Expand dimensions of phi so that they are broadcastable
+    except ValueError:
+        n = np.trapz(f, f['phi'].expand_dims({'theta': 1, 'energy_index': 1}, axis=(2, 3)),
+                     axis=f.get_axis_num('phi_index'))
     
-    if dist.attrs['mode'] == 'brst':
-        N = xr.concat([density_3D(f1, mass, dist.attrs['Energy_e0'])
-                       for f1 in dist],
-                      'time')
-    else:
-        N = density_4D(dist, mass, dist.attrs['Energy_e0'])
+        # trapz returns an ndarray. Convert it back to a DataArray
+        n = xr.DataArray(n,
+                         dims=('time', 'theta', 'energy_index'),
+                         coords={'time': f['time'],
+                                 'theta': f['theta'],
+                                 'energy_index': f['energy_index'],
+                                 'U': f['U']})
+
+
+    # Integrate over polar angle
+    n = (np.sin(n['theta']) * n).integrate('theta')
+
+    # Integrate over energy
+    #   - U ranges from [0, inf] and np.inf/np.inf = nan
+    #   - Set the last element of the energy dimension of y to 0
+    with np.errstate(invalid='ignore', divide='ignore'):
+        y = np.sqrt(f['U']) / (1-f['U'])**(5/2)    
+    # the DataArray version of where, other is unimplemented
+    y = np.where(np.isfinite(y), y, 0)
+    
+    coeff = 1e6 * np.sqrt(2) * (eV2J * E0 / mass)**(3/2)
+    try:
+        n = coeff * (y * n).integrate('U')
+    # Energy and U are time-dependent, so use trapz
+    except ValueError:
+        n = coeff * np.trapz(y * n, n['U'], axis=n.get_axis_num('energy_index'))
+        n = xr.DataArray(n, dims='time', coords={'time': f['time']})
     
     # Add metadata
-    N.name = 'N{}'.format(dist.attrs['species'])
-    N.attrs['long_name'] = ('Number density calculated by integrating the '
+    n.name = 'n{0}'.format(f.attrs['species'])
+    n.attrs['long_name'] = ('Number density calculated by integrating the '
                             'distribution function.')
-    N.attrs['species'] = dist.attrs['species']
-    N.attrs['standard_name'] = 'number_density'
-    N.attrs['units'] = 'cm^-3'
-    
-    return N
+    n.attrs['species'] = f.attrs['species']
+    n.attrs['standard_name'] = 'number_density'
+    n.attrs['units'] = 'cm^-3'
+
+    return n
 
 
-def entropy(dist):
+def entropy(f):
     '''
     Calculate entropy from a time series of 3D velocity space
     distribution function.
@@ -2066,20 +2103,55 @@ def entropy(dist):
     S : `xarray.DataArray`
         Entropy
     '''
-    mass = species_to_mass(dist.attrs['species'])
+    mass = species_to_mass(f.attrs['species'])
+    kB = constants.k # J/K
+
+    try:
+        E0 = f.attrs['Energy_e0']
+    except KeyError:
+        pass
     
-    if dist.attrs['mode'] == 'brst':
-        S = xr.concat([entropy_3D(f1, mass, dist.attrs['Energy_e0'])
-                       for f1 in dist],
-                      'time')
-    else:
-        S = entropy_4D(dist, mass, dist.attrs['Energy_e0'])
+    # Integrate over phi and theta
+    #   - Measurement bins with zero counts result in a
+    #     phase space density of 0
+    #   - Photo-electron correction can result in negative
+    #     phase space density.
+    #   - Log of value <= 0 is nan. Avoid by replacing
+    #     with 1 so that log(1) = 0
+    S = 1e12 * f
+    S = S.where(S > 0, 1)
+
+    # Integrate over azimuth
+    try:
+        S = (S * np.log(S)).integrate('phi')
     
-    S.name = 'S{}'.format(dist.attrs['species'])
+    except ValueError:
+        phi = f['phi'].expand_dims({'theta': 1, 'energy_index': 1}, axis=(2, 3))
+        S = np.trapz(S * np.log(S), phi, axis=1)
+    
+    # Integrate over polar angle
+    theta = f['theta'].expand_dims({'time': 1, 'energy_index': 1}, axis=(0,2)).data
+    S = np.trapz(np.sin(theta) * S, theta, axis=1)
+
+    # Integrate over Energy
+    with np.errstate(invalid='ignore', divide='ignore'):
+        y = np.sqrt(f['U']) / (1 - f['U'])**(5/2)
+    y = np.where(np.isfinite(y), y, 0)
+    
+    coeff = -kB * np.sqrt(2) * (eV2J * E0 / mass)**(3/2)
+    S = coeff * np.trapz(y * S, f['U'], axis=1)
+
+    # Convert to a DataArray
+    S = xr.DataArray(S,
+                     dims='time',
+                     coords={'time': f['time']})
+    
+    # Add metadata
+    S.name = 'S{}'.format(f.attrs['species'])
     S.attrs['long_name'] = 'Velocity space entropy density'
     S.attrs['standard_name'] = 'entropy_density'
     S.attrs['units'] = 'J/K/m^3 ln(s^3/m^6)'
-    
+
     return S
 
 
@@ -2141,7 +2213,7 @@ def epsilon(dist, dist_max=None, N=None, V=None, T=None):
     return e
 
 
-def information_loss(dist_max, dist, N=None, T=None):
+def information_loss(f_M, f, n=None, t=None):
     '''
     Calculate entropy from a time series of 3D velocity space
     distribution function.
@@ -2166,25 +2238,97 @@ def information_loss(dist_max, dist, N=None, T=None):
     sv : `xarray.DataArray`
         Velocity space entropy density
     '''
-    mass = species_to_mass(dist.attrs['species'])
-    if N is None:
-        N = density(f)
-    if T is None:
-        T = temperature(f)
+    mass = species_to_mass(f.attrs['species'])
+    kB = constants.k # J/K
+    eV2J = constants.eV
+    eV2K = constants.value('electron volt-kelvin relationship')
     
-    if dist.attrs['mode'] == 'brst':
-        numerator = []
-        denominator = []
-        for fm1, f1, n1, t1 in zip(dist_max, dist, N, T):
-            num, denom = information_loss_3D(fm1, f1, mass, dist.attrs['Energy_e0'], n1, t1)
-            numerator.append(num)
-            denominator.append(denom)
-        
-        numerator = xr.concat(numerator, 'time')
-        denominator = xr.concat(denominator, 'time')
-    else:
-        numerator, denominator = information_loss_4D(f_max, dist, mass, dist.attrs['Energy_e0'], N, T)
+    try:
+        E0 = f.attrs['Energy_e0']
+    except KeyError:
+        pass
+
+    # Need density and temperature
+    if n is None:
+        n = density(f)
+    if t is None:
+        t = scalar_temperature(f, n=n)
     
+    # Assume that the azimuth and polar angle bins are equal size
+    dtheta = f['theta'].diff(dim='theta').mean().item()
+    dphi = f['phi'].diff(dim='phi_index').mean().item()
+
+    # Expand theta, and U so they can be broadcasted
+    #   - Do not expand phi yet because we still do not know if it is
+    #     time dependent (brst mode) or not (srvy mode)
+    # phi = f['phi'].expand_dims(theta=1, energy_index=1, axis=(2, 3))
+    theta = f['theta'].expand_dims(time=1, phi=1, energy_index=1, axis=(0,1,3))
+    U = f['U'].expand_dims(phi=1, theta=1, axis=(1,2))
+    
+    # Calculate the factors that associated with the normalized
+    # volume element
+    #   - U ranges from [0, inf] and np.inf/np.inf = nan
+    #   - Set the last element of y along U manually to 0
+    #   - log(0) = -inf; Zeros come from theta and y. Reset to zero
+    #   - Photo-electron correction can result in negative phase space
+    #     density. log(-1) = nan
+    with np.errstate(invalid='ignore', divide='ignore'):
+        y = (np.sqrt(U) / (1 - U)**(5/2))
+        lnydy = np.log(y * np.sin(theta.data) * dtheta * dphi)
+    y = np.where(np.isfinite(y), y, 0)
+    lnydy = np.where(np.isfinite(lnydy), lnydy, 0)
+
+    # Numerator
+    coeff = 1e-6/(3*n) * (2*eV2J*E0/mass)**(3/2) # m^6/s^3
+    try:
+        num1 = (y * lnydy * (f_M - f)).integrate('phi')
+    except ValueError:
+        phi = f['phi'].expand_dims(theta=1, energy_index=1, axis=(2, 3))
+        num1 = np.trapz(y * lnydy * (f_M - f), phi, axis=1)
+    num1 = (np.sin(theta.squeeze(dim='phi')) * num1).integrate('theta')
+    num1 = 1e12 * coeff * np.trapz(num1, f['U'], axis=1)
+    
+    try:
+        num2 = (y * (f_M - f)).integrate('phi')
+    except ValueError:
+        num2 = np.trapz(y * (f_M - f), phi, axis=1)
+    num2 = (np.sin(theta.squeeze(dim='phi')) * num2).integrate('theta')
+    
+    # Integrate over energy
+    #   - Trapezoidal rule of f * ln(dU) * dU
+    dU = f['U'][:,1:] - f['U'][:,:-1]
+    with np.errstate(divide='ignore', invalid='ignore'):
+        num2 = 0.5 * (num2[:,:-1] + num2[:,1:]) * (dU * np.log(dU))
+    num2 = 1e12 * coeff * np.sum(num2, axis=1)
+
+    numerator = num1 + num2
+    
+    # Denominator
+    d1 = 1
+    d2 = np.log(2**(2/3) * np.pi * kB * eV2K * t / (eV2J * E0))
+    
+    try:
+        d3 = (y * lnydy * f_M).integrate('phi')
+    except ValueError:
+        d3 = np.trapz(y * lnydy * f_M, phi, axis=1)
+    d3 = (np.sin(theta.squeeze(dim='phi')) * d3).integrate('theta')
+    d3 = 1e12 * coeff * np.trapz(d3, f['U'], axis=1)
+    
+    try:
+        d4 = (y * f_M).integrate('phi')
+    except ValueError:
+        d4 = np.trapz(y * f_M, phi, axis=1)
+    d4 = (np.sin(theta.squeeze(dim='phi')) * d4).integrate('theta')
+
+    # Integrate over energy
+    #   - Trapezoidal rule of f * ln(dU) * dU
+    with np.errstate(divide='ignore', invalid='ignore'):
+        d4 = 0.5 * (d4[:,:-1] + d4[:,1:]) * (dU * np.log(dU))
+    d4 = 1e12 * coeff * np.sum(d4, axis=1)
+    
+    denominator = d1 + d2 - d3 - d4
+    
+    # Metadata
     numerator.name = 'N{}'.format(dist.attrs['species'])
     numerator.attrs['long_name'] = 'Numerator of the kinetic information loss.'
     numerator.attrs['standard_name'] = 'information_loss'
@@ -2194,24 +2338,24 @@ def information_loss(dist_max, dist, N=None, T=None):
     denominator.attrs['long_name'] = 'Numerator of the kinetic information loss.'
     denominator.attrs['standard_name'] = 'information_loss'
     denominator.attrs['units'] = 'J/K/m^3'
-    
+
     return numerator, denominator
 
 
-def pressure(dist, N=None, T=None):
+def pressure(f, n=None, T=None):
     '''
     Calculate pressure tensor from a time series of 3D velocity space
     distribution function.
     
     Parameters
     ----------
-    dist : `xarray.DataArray`
-        A time series of 3D distribution functions
+    f : `xarray.DataArray`
+        A time series of distribution functions
     N : `xarray.DataArray`
-        Number density computed from `dist`. If not provided,
+        Number density computed from `f`. If not provided,
         it is calculated
     T : `xarray.DataArray`
-        Scalar temperature computed from `dist`. If not provided,
+        Scalar temperature computed from `f`. If not provided,
         it is calculated
     
     Returns
@@ -2219,37 +2363,127 @@ def pressure(dist, N=None, T=None):
     P : `xarray.DataArray`
         Pressure tensor
     '''
-    mass = species_to_mass(dist.attrs['species'])
-    if N is None:
-        N = density(dist)
+    kB = constants.k
+    eV2K = constants.value('electron volt-kelvin relationship')
+    
+    # Need density and temperature
+    if n is None:
+        n = density(f)
     if T is None:
-        T = temperature(dist, N=N)
+        T = temperature(f, n=n)
     
-    P = pressure_4D(N, T)
+    # Calculate pressure from ideal gas law
+    P = 1e15 * n * kB * eV2K * T
     
-    P.name = 'P{0}'.format(dist.attrs['species'])
-    P.attrs['long_title'] = ('Pressure calculated from d{}s velocity '
+    # Set metadata
+    P.name = 'P{0}'.format(f.attrs['species'])
+    P.attrs['long_title'] = ('Pressure calculated from d{0}s velocity '
                              'distribution function.'
-                             .format(dist.attrs['species']))
+                             .format(f.attrs['species']))
     P.attrs['units'] = 'nPa'
     
     return P
 
 
-def temperature(dist, N=None, V=None):
+def relative_entropy(f, f_M, E0=100):
+    '''
+    Compute the relative velocity-space entropy
+
+    Parameters
+    f : (N,T,P,E), `xarray.DataArray`
+        The measured distribution with dimensions/coordinates of time (N),
+        polar/theta angle (T), azimuth/theta angle (P), and energy (E)
+    f_M : (N,T,P,E), `xarray.DataArray`
+        An equivalent Maxwellian distribution with dimensions/coordinates of time (N),
+        polar/theta angle (T), azimuth/theta angle (P), and energy (E). It should
+        have the same density and temperature as the measured distribution
+    species : str
+        Particle species represented by the distribution: ('e', 'i')
+    E0 : float
+        Energy (keV) used to normalize the energy bins of the distribution
+    
+    Returns
+    -------
+    sV_rel : (N,), `xarray.DataArray`
+        Relative velocity space entropy [J/K/m^3]
+    '''
+    mass = species_to_mass(f.attrs['species'])
+    
+    try:
+        E0 = f.attrs['Energy_e0']
+    except KeyError:
+        pass
+
+    # Integrate over phi and theta
+    #   - Measurement bins with zero counts result in a
+    #     phase space density of 0
+    #   - Photo-electron correction can result in negative
+    #     phase space density.
+    #   - Log of value <= 0 is nan. Avoid be replacing
+    #     with 1 so that log(1) = 0
+    sv_rel = f / f_M
+    sv_rel = sv_rel.where(sv_rel > 0, 1)
+    try:
+    # 1e12 converts s^3/cm^6 to s^3/m^6
+        sv_rel = (1e12 * f * np.log(sv_rel)).integrate('phi')
+    except ValueError:
+    # In burst mode, phi is time-dependent
+    #   - Use trapz to explicitly specify which axis is being integrated
+    #   - Expand dimensions of phi so that they are broadcastable
+        sv_rel = np.trapz(1e12 * f * np.log(sv_rel),
+                        f['phi'].expand_dims({'theta': 1, 'energy_index': 1}, axis=(2, 3)),
+                        axis=f.get_axis_num('phi_index'))
+    
+        # trapz returns an ndarray. Convert it back to a DataArray
+        sv_rel = xr.DataArray(sv_rel,
+                            dims=('time', 'theta', 'energy_index'),
+                            coords={'time': f['time'],
+                                    'theta': f['theta'],
+                                    'energy_index': f['energy_index'],
+                                    'U': f['U']})
+
+    # Integrate over theta
+    sv_rel = (np.sin(sv_rel['theta']) * sv_rel).integrate('theta')
+
+    # Integrate over Energy
+    with np.errstate(invalid='ignore', divide='ignore'):
+        y = np.sqrt(sv_rel['U']) / (1 - sv_rel['U'])**(5/2)
+    y = y.where(np.isfinite(y.values), 0)
+
+    coeff = -kB * np.sqrt(2) * (eV2J * E0 / mass)**(3/2)
+    sv_rel = coeff * np.trapz(y * sv_rel, y['U'], axis=y.get_axis_num('energy_index'))
+
+    sv_rel = xr.DataArray(sv_rel, dims='time', coords={'time': f['time']})
+
+    return sv_rel # J/K/m^3
+
+
+def scalar_temperature(f=None, n=None, V=None, T=None):
+    if T is None:
+        T = temperature(f, n=n, V=V)
+    t = (T[:,0,0] + T[:,1,1] + T[:,2,2]) / 3.0
+    t = t.drop(('t_index_dim1', 't_index_dim2'))
+
+    # Metadata
+    t.name = 't' + t.name[1:]
+
+    return t
+
+
+def temperature(f, n=None, V=None):
     '''
     Calculate the temperature tensor from a time series of 3D velocity
     space distribution function.
     
     Parameters
     ----------
-    dist : `xarray.DataArray`
-        A time series of 3D distribution functions
-    N : `xarray.DataArray`
-        Number density computed from `dist`. If not provided,
+    f : `xarray.DataArray`
+        A time series of distribution functions
+    n : `xarray.DataArray`
+        Number density computed from `f`. If not provided,
         it is calculated
     V : `xarray.DataArray`
-        Bulk velocity computed from `dist`. If not provided,
+        Bulk velocity computed from `f`. If not provided,
         it is calculated
     
     Returns
@@ -2257,40 +2491,115 @@ def temperature(dist, N=None, V=None):
     T : `xarray.DataArray`
         Temperature tensor
     '''
-    mass = species_to_mass(dist.attrs['species'])
-    if N is None:
-        N = density(dist)
+    mass = species_to_mass(f.attrs['species'])
+    K2eV = constants.value('kelvin-electron volt relationship')
+    eV2J = constants.eV
+    kB = constants.k # J/k
+    
+    try:
+        E0 = f.attrs['Energy_e0']
+    except KeyError:
+        pass
+    
+    # Need density and velocity
+    if n is None:
+        n = density(f)
     if V is None:
-        V = velocity(dist, N=N)
+        V = velocity(f, n=n)
     
-    if dist.attrs['mode'] == 'brst':
-        T = xr.concat([temperature_3D(f1, mass, dist.attrs['Energy_e0'], n1, v1)
-                       for f1, n1, v1 in zip(dist, N, V)],
-                      'time')
-    else:
-        T = temperature_4D(dist, mass, dist.attrs['Energy_e0'], N, V)
+    # Integrate over azimuth
+    try:
+        Txx = (np.cos(f['phi'])**2 * f).integrate('phi')
+        Tyy = (np.sin(f['phi'])**2 * f).integrate('phi')
+        Tzz = f.integrate('phi')
+        Txy = (np.cos(f['phi']) * np.sin(f['phi']) * f).integrate('phi')
+        Txz = (np.cos(f['phi']) * f).integrate('phi')
+        Tyz = (np.sin(f['phi']) * f).integrate('phi')
     
-    T.name = 'T{0}'.format(dist.attrs['species'])
-    T.attrs['species'] = dist.attrs['species']
-    T.attrs['long_name'] = ('Temperature calculated from d{}s velocity '
-                            'distribution function.'.format(dist.attrs['species']))
+    # In burst mode, phi is time-dependent
+    #   - Use trapz to explicitly specify which axis is being integrated
+    #   - Expand dimensions of phi so that they are broadcastable
+    except ValueError:
+        # To multiply phi and f with xarray, the dimensions need to be the same sizes
+        # Numpy can broadcast dimensions of size 1
+        phi = f['phi'].expand_dims({'theta': 1, 'energy_index': 1}, axis=(2, 3)).data
+
+        Txx = np.trapz(np.cos(phi)**2 * f, phi, axis=1)
+        Tyy = np.trapz(np.sin(phi)**2 * f, phi, axis=1)
+        Tzz = np.trapz(f, phi, axis=1)
+        Txy = np.trapz(np.cos(phi) * np.sin(phi) * f, phi, axis=1)
+        Txz = np.trapz(np.cos(phi) * f, phi, axis=1)
+        Tyz = np.trapz(np.sin(phi) * f, phi, axis=1)
+
+    # Integrate over theta
+    #   - trapz returns a ndarray so use np.trapz() instead of DataArray.inegrate()
+    #   - Dimensions should now be: before: [time, theta, energy], after: [time, energy]
+    theta = f['theta'].expand_dims({'time': 1, 'energy_index': 1}, axis=(0,2)).data
+    Txx = np.trapz(np.sin(theta)**3 * Txx, theta, axis=1)
+    Tyy = np.trapz(np.sin(theta)**3 * Tyy, theta, axis=1)
+    Tzz = np.trapz(np.cos(theta)**2 * np.sin(theta) * Tzz, theta, axis=1)
+    Txy = np.trapz(np.sin(theta)**3 * Txy, theta, axis=1)
+    Txz = np.trapz(np.cos(theta) * np.sin(theta)**2 * Txz, theta, axis=1)
+    Tyz = np.trapz(np.cos(theta) * np.sin(theta)**2 * Tyz, theta, axis=1)
+
+    # Create a temperature tensor
+    T = np.stack([np.dstack([Txx, Txy, Txz]),
+                  np.dstack([Txy, Tyy, Tyz]),
+                  np.dstack([Txz, Tyz, Tzz]),
+                  ], axis=3
+                 )
+    
+    # Create a velocity tensor
+    Vij = xr.concat([xr.concat([V[:,0]*V[:,0],
+                                V[:,0]*V[:,1],
+                                V[:,0]*V[:,2]], dim='t_index_dim1'),
+                     xr.concat([V[:,1]*V[:,0],
+                                V[:,1]*V[:,1],
+                                V[:,1]*V[:,2]], dim='t_index_dim1'),
+                     xr.concat([V[:,2]*V[:,0],
+                                V[:,2]*V[:,1],
+                                V[:,2]*V[:,2]], dim='t_index_dim1')
+                     ], dim='t_index_dim2'
+                    )
+    Vij = Vij.drop('velocity_index')
+
+    # Integrate over energy
+    with np.errstate(divide='ignore', invalid='ignore'):
+        y = f['U']**(3/2) / (1 - f['U'])**(7/2)
+    y = np.where(np.isfinite(y), y, 0)
+
+    coeff = 1e6 * (2/mass)**(3/2) / (n * kB / K2eV) * (E0*eV2J)**(5/2)
+    T = (coeff.expand_dims(['t_index_dim1', 't_index_dim2'], axis=[1,2])
+         * np.trapz(y[..., np.newaxis, np.newaxis] * T,
+                    f['U'].expand_dims(dim=['t_index_dim1', 't_index_dim2'],
+                                       axis=[2,3]),
+                    axis=1)
+         - (1e6 * mass / kB * K2eV * Vij)
+         ).assign_coords(t_index_dim1=['x', 'y', 'z'],
+                         t_index_dim2=['x', 'y', 'z'])
+    
+    # Add metadata
+    T.name = 'T{0}'.format(f.attrs['species'])
+    T.attrs['species'] = f.attrs['species']
+    T.attrs['long_name'] = ('Temperature calculated from d{0}s velocity '
+                            'distribution function.'.format(f.attrs['species']))
     T.attrs['standard_name'] = 'temperature_tensor'
     T.attrs['units'] = 'eV'
-    
+
     return T
 
 
-def velocity(dist, N=None):
+def velocity(f, n=None, E0=100):
     '''
     Calculate velocity from a time series of 3D velocity space
     distribution functions.
     
     Parameters
     ----------
-    dist : `xarray.DataArray`
-        A time series of 3D distribution functions
-    N : `xarray.DataArray`
-        Number density computed from `dist`. If not provided,
+    f : `xarray.DataArray`
+        A time series of distribution functions
+    n : `xarray.DataArray`
+        Number density computed from `f`. If not provided,
         it is calculated
     
     Returns
@@ -2298,27 +2607,73 @@ def velocity(dist, N=None):
     V : `xarray.DataArray`
         Bulk velocity
     '''
-    mass = species_to_mass(dist.attrs['species'])
-    if N is None:
-        N = density(dist)
+    mass = species_to_mass(f.attrs['species'])
+
+    try:
+        E0 = f.attrs['Energy_e0']
+    except KeyError:
+        pass
     
-    if dist.attrs['mode'] == 'brst':
-        V = xr.concat([velocity_3D(f1, mass, dist.attrs['Energy_e0'], n1)
-                       for f1, n1 in zip(dist, N)],
-                      'time')
-    else:
-        V = velocity_4D(dist, mass, dist.attrs['Energy_e0'], N)
+    # Need the density
+    if n is None:
+        n = density(f)
     
-    V.name = 'V{}'.format(dist.attrs['species'])
+    # Integrate over azimuth angle
+    try:
+        vx = (np.cos(f['phi']) * f).integrate('phi')
+        vy = (np.sin(f['phi']) * f).integrate('phi')
+        vz = f.integrate('phi')
+    
+    # In burst mode, phi is time-dependent
+    #   - Use trapz to explicitly specify which axis is being integrated
+    #   - Expand dimensions of phi so that they are broadcastable
+    except ValueError:
+        # To multiply phi and f with xarray, the dimensions need to be the same sizes
+        # Numpy can broadcast dimensions of size 1
+        phi = f['phi'].expand_dims({'theta': 1, 'energy_index': 1}, axis=(2, 3))
+        phi_axis = f.get_axis_num('phi_index')
+
+        vx = np.trapz(np.cos(phi).data * f, phi, axis=phi_axis)
+        vy = np.trapz(np.sin(phi).data * f, phi, axis=phi_axis)
+        vz = np.trapz(f, phi, axis=phi_axis)
+
+    # Integrate over theta
+    #   - trapz returns a ndarray so use np.trapz() instead of DataArray.inegrate()
+    #   - Dimensions should now be: before: [time, theta, energy], after: [time, energy]
+    theta = f['theta'].expand_dims({'time': 1, 'energy_index': 1}, axis=(0,2)).data
+    vx = np.trapz(np.sin(theta)**2 * vx, theta, axis=1)
+    vy = np.trapz(np.sin(theta)**2 * vy, theta, axis=1)
+    vz = np.trapz(np.cos(theta) * np.sin(theta) * vz, theta, axis=1)
+    
+    # Integrate over Energy
+    #   - U ranges from [0, inf] and np.inf/np.inf = nan
+    #   - Set the last element of the energy dimension of y to 0
+    with np.errstate(divide='ignore', invalid='ignore'):
+        y = f['U'] / (1 - f['U'])**3
+    y = np.where(np.isfinite(y), y, 0)
+    
+    coeff = -1e3 * 2 * (eV2J * E0 / mass)**2 / n
+    vx = coeff * np.trapz(y * vx, f['U'], axis=1)
+    vy = coeff * np.trapz(y * vy, f['U'], axis=1)
+    vz = coeff * np.trapz(y * vz, f['U'], axis=1)
+
+    # Combine into a single array
+    V = (xr.concat((vx, vy, vz), dim='velocity_index')
+         .transpose()
+         .assign_coords({'velocity_index': ['Vx', 'Vy', 'Vz']})
+         )
+
+    # Add metadata
+    V.name = 'V{0}'.format(f.attrs['species'])
     V.attrs['long_name'] = ('Bulk velocity calculated by integrating the '
                             'distribution function.')
     V.attrs['standard_name'] = 'bulk_velocity'
     V.attrs['units'] = 'km/s'
-    
+
     return V
 
 
-def vspace_entropy(dist, N=None, s=None):
+def vspace_entropy(f, n=None, s=None):
     '''
     Calculate entropy from a time series of 3D velocity space
     distribution function.
@@ -2343,128 +2698,77 @@ def vspace_entropy(dist, N=None, s=None):
     sv : `xarray.DataArray`
         Velocity space entropy density
     '''
-    mass = species_to_mass(dist.attrs['species'])
-    if N is None:
-        N = density(dist)
+    mass = species_to_mass(f.attrs['species'])
+    kB = constants.k # J/K
+    eV2J = constants.eV
+
+    try:
+        E0 = f.attrs['Energy_e0']
+    except KeyError:
+        pass
+    
+    # Need density and entropy
+    if n is None:
+        n = density(f)
     if s is None:
-        s = entropy(dist)
+        s = entropy(f)
     
-    if dist.attrs['mode'] == 'brst':
-        sv = xr.concat([vspace_entropy_3D(f1, mass, dist.attrs['Energy_e0'], n1, s1)
-                        for f1, n1, s1 in zip(dist, N, s)],
-                       'time')
-    else:
-        sv = vspace_entropy_4D(dist, mass, dist.attrs['Energy_e0'], N, s)
+    # Assume that the azimuth and polar angle bins are equal size
+    #   - NOTE: dphi is actually time-dependent! mean(dim='phi_index')
+    dtheta = f['theta'].diff(dim='theta').mean().item()
+    dphi = f['phi'].diff(dim='phi_index').mean().item()
+
+    # Expand theta, and U so they can be broadcasted
+    #   - Do not expand phi yet because we still do not know if it is
+    #     time dependent (brst mode) or not (srvy mode)
+    # phi = f['phi'].expand_dims(theta=1, energy_index=1, axis=(2, 3))
+    theta = f['theta'].expand_dims(time=1, phi=1, energy_index=1, axis=(0,1,3))
+    U = f['U'].expand_dims(phi=1, theta=1, axis=(1,2))
     
-    sv.name = 'sv{}'.format(dist.attrs['species'])
-    sv.attrs['long_name'] = 'Velocity space entropy density'
-    sv.attrs['standard_name'] = 'entropy_density'
-    sv.attrs['units'] = 'J/K/m^3 ln(...)'
+    # Calculate the factors that associated with the normalized
+    # volume element
+    #   - U ranges from [0, inf] and np.inf/np.inf = nan
+    #   - Set the last element of y along U manually to 0
+    #   - ln(0) = -inf; Zeros come from theta and y. Reset to zero
+    #   - Photo-electron correction can result in negative phase space
+    #     density. log(-1) = nan
+    coeff = np.sqrt(2) * (eV2J*E0/mass)**(3/2) # m^3/s^3
+    with np.errstate(divide='ignore'):
+        y = (np.sqrt(U) / (1 - U)**(5/2))
+        lnydy = np.log(y * np.sin(theta.data) * dtheta * dphi)
+    y = np.where(np.isfinite(y), y, 0)
+    lnydy = np.where(np.isfinite(lnydy), lnydy, 0)
+    
+    # Terms in that make up the velocity space entropy density
+    sv1 = s # J/K/m^3 ln(s^3/m^6) -- Already multiplied by -kB
+    sv2 = kB * (1e6*n) * np.log(1e6*n/coeff) # 1/m^3 * ln(1/m^3)
+    
+    try:
+        sv3 = (y * lnydy * f).integrate('phi')
+    except ValueError:
+        phi = f['phi'].expand_dims({'theta': 1, 'energy_index': 1}, axis=(2, 3))
+        sv3 = np.trapz(y * lnydy * f, phi, axis=1)
+    sv3 = (np.sin(theta.squeeze(dim='phi')) * sv3).integrate('theta')
+    sv3 = -1e12 * kB * coeff * np.trapz(sv3, f['U'], axis=1) # 1/m^3
+    
+    try:
+        sv4 = (y * f).integrate('phi')
+    except ValueError:
+        sv4 = np.trapz(y * f, phi, axis=1)
+    sv4 = (np.sin(theta.squeeze(dim='phi')) * sv4).integrate('theta')
+    
+    # Integrate over energy
+    #   - Trapezoidal rule of f * ln(dU) * dU
+    dU = f['U'][:,1:] - f['U'][:,:-1]
+    with np.errstate(divide='ignore', invalid='ignore'):
+        sv4 = 0.5 * (sv4[:,:-1] + sv4[:,1:]) * (dU * np.log(dU))
+    sv4 = -1e12 * kB * coeff * np.sum(sv4, axis=1)
+    
+    # Velocity space entropy density
+    sv = sv1 + sv2 + sv3 + sv4 # J/K/m^3
     
     return sv
-
-
-def density_3D(f, mass, E0):
-    '''
-    Calculate number density from a single 3D velocity space
-    distribution function.
     
-    Notes
-    -----
-    This is needed because the azimuthal bin locations in the
-    burst data FPI distribution functions is time dependent. By
-    extracting single distributions, the phi, theta, and energy
-    variables become time-independent and easier to work with.
-    
-    Parameters
-    ----------
-    f : `xarray.DataArray`
-        A preconditioned 3D distribution function
-    mass : float
-        Mass (kg) of the particle species represented in the distribution.
-    E0 : float
-        Energy used to normalize the energy bins to [0, inf)
-    
-    Returns
-    -------
-    N : `xarray.DataArray`
-        Number density
-    '''
-    eV2J = constants.eV
-    
-    N = f.integrate('phi')
-    N = (np.sin(N['theta']) * N).integrate('theta')
-    
-    # Integrate over Energy
-    with np.errstate(invalid='ignore', divide='ignore'):
-        y = np.sqrt(N['U']) / (1-N['U'])**(5/2)
-    y = y.where(np.isfinite(y), 0)
-    
-    coeff = 1e6 * np.sqrt(2) * (eV2J * E0 / mass)**(3/2)
-    N = coeff * (y * N).integrate('U')
-    
-    return N
-
-
-def entropy_3D(f, mass, E0):
-    '''
-    Calculate entropy from a single 3D velocity space
-    distribution function.
-    
-    Notes
-    -----
-    This is needed because the azimuthal bin locations in the
-    burst data FPI distribution functions is time dependent. By
-    extracting single distributions, the phi, theta, and energy
-    variables become time-independent and easier to work with.
-    
-    Calculation of velocity and kinetic entropy can be found in
-    Liang, et al, PoP (2019) [1]_
-    
-    .. [1] Liang, H., Cassak, P. A., Servidio, S., Shay, M. A., Drake,
-        J. F., Swisdak, M., … Delzanno, G. L. (2019). Decomposition of
-        plasma kinetic entropy into position and velocity space and the
-        use of kinetic entropy in particle-in-cell simulations. Physics
-        of Plasmas, 26(8), 82903. https://doi.org/10.1063/1.5098888
-    
-    Parameters
-    ----------
-    f : `xarray.DataArray`
-        A preconditioned 3D distribution function
-    mass : float
-        Mass (kg) of the particle species represented in the distribution.
-    E0 : float
-        Energy used to normalize the energy bins to [0, inf)
-    
-    Returns
-    -------
-    S : `xarray.DataArray`
-        Velocity space entropy
-    '''
-    kB = constants.k # J/K
-    
-    # Integrate over phi and theta
-    #   - Measurement bins with zero counts result in a
-    #     phase space density of 0
-    #   - Photo-electron correction can result in negative
-    #     phase space density.
-    #   - Log of value <= 0 is nan. Avoid be replacing
-    #     with 1 so that log(1) = 0
-    S = 1e12 * f
-    S = S.where(S > 0, 1)
-    S = (S * np.log(S)).integrate('phi')
-    S = (np.sin(S['theta']) * S).integrate('theta')
-    
-    # Integrate over Energy
-    with np.errstate(invalid='ignore', divide='ignore'):
-        y = np.sqrt(S['U']) / (1 - S['U'])**(5/2) * S
-    y = y.where(np.isfinite(y), 0)
-    
-    coeff = -kB * np.sqrt(2) * (eV2J * E0 / mass)**(3/2)
-    S = coeff * y.integrate('U')
-    
-    return S
-
 
 def epsilon_3D(f, mass, E0, f_max, N):
     '''
@@ -2519,443 +2823,6 @@ def epsilon_3D(f, mass, E0, f_max, N):
     return epsilon
 
 
-def information_loss_3D(f_M, f, mass, E0, N, T):
-    '''
-    Calculate velocity space entropy from a single 3D velocity space
-    distribution function. Because the 
-    
-    Notes
-    -----
-    This is needed because the azimuthal bin locations in the
-    burst data FPI distribution functions is time dependent. By
-    extracting single distributions, the phi, theta, and energy
-    variables become time-independent and easier to work with.
-    
-    Calculation of velocity and kinetic entropy can be found in
-    Liang, et al, PoP (2019) `[1]`_. The implementation here takes into
-    account the fact that the FPI energy bins are not equally spaced.
-    
-    .. [1]: Liang, H., Cassak, P. A., Servidio, S., Shay, M. A., Drake,
-        J. F., Swisdak, M., … Delzanno, G. L. (2019). Decomposition of
-        plasma kinetic entropy into position and velocity space and the
-        use of kinetic entropy in particle-in-cell simulations. Physics
-        of Plasmas, 26(8), 82903. https://doi.org/10.1063/1.5098888
-    
-    Parameters
-    ----------
-    f : `xarray.DataArray`
-        A preconditioned 3D distribution function
-    mass : float
-        Mass (kg) of the particle species represented in the distribution.
-    E0 : float
-        Energy (eV) used to normalize the energy bins to [0, inf)
-    
-    Returns
-    -------
-    S : `xarray.DataArray`
-        Velocity space entropy
-    '''
-    kB = constants.k # J/K
-    eV2J = constants.eV
-    eV2K = constants.value('electron volt-kelvin relationship')
-    
-    # Assume that the azimuth and polar angle bins are equal size
-    dtheta = f['theta'].diff(dim='theta').mean().item()
-    dphi = f['phi'].diff(dim='phi_index').mean().item()
-    
-    # Calculate the factors that associated with the normalized
-    # volume element
-    #   - U ranges from [0, inf] and np.inf/np.inf = nan
-    #   - Set the last element of y along U manually to 0
-    #   - log(0) = -inf; Zeros come from theta and y. Reset to zero
-    #   - Photo-electron correction can result in negative phase space
-    #     density. log(-1) = nan
-    with np.errstate(invalid='ignore', divide='ignore'):
-        y = (np.sqrt(f['U']) / (1 - f['U'])**(5/2))
-        lnydy = np.log(y * np.sin(f['theta']) * dtheta * dphi)
-    y = y.where(np.isfinite(y), 0)
-    lnydy = lnydy.where(np.isfinite(lnydy), 0)
-    
-    # Numerator
-    coeff = 1e-6/(3*N) * (2*eV2J*E0/mass)**(3/2) # m^6/s^3
-    num1 = (y * lnydy * (f_M - f)).integrate('phi')
-    num1 = (np.sin(f['theta']) * num1).integrate('theta')
-    num1 = 1e12 * coeff * num1.integrate('U')
-    
-    num2 = (y * (f_M - f)).integrate('phi')
-    num2 = (np.sin(f['theta']) * num2).integrate('theta')
-    num2 = 1e12 * coeff * Distribution_Function._trapz(num2, num2['U'])
-    
-    numerator = num1 + num2
-    
-    # Denominator
-    d1 = 1
-    d2 = np.log(2**(2/3) * np.pi * kB * eV2K * T / (eV2J * E0))
-    
-    d3 = (y * lnydy * f_M).integrate('phi')
-    d3 = (np.sin(f['theta']) * d3).integrate('theta')
-    d3 = 1e12 * coeff * d3.integrate('U')
-    
-    d4 = (y * f_M).integrate('phi')
-    d4 = (np.sin(f['theta']) * d4).integrate('theta')
-    d4 = 1e12 * coeff * Distribution_Function._trapz(d4, d4['U'])
-    
-    denominator = d1 + d2 - d3 - d4
-    
-    return numerator, denominator
-    
-
-def pressure_3D(N, T):
-    '''
-    Calculate the epsilon entropy parameter [1]_ from a single 3D velocity space
-    distribution function.
-    
-    .. [1] Greco, A., Valentini, F., Servidio, S., &
-        Matthaeus, W. H. (2012). Inhomogeneous kinetic effects related
-        to intermittent magnetic discontinuities. Phys. Rev. E,
-        86(6), 66405. https://doi.org/10.1103/PhysRevE.86.066405
-    
-    Notes
-    -----
-    This is needed because the azimuthal bin locations in the
-    burst data FPI distribution functions is time dependent. By
-    extracting single distributions, the phi, theta, and energy
-    variables become time-independent and easier to work with.
-    
-    Parameters
-    ----------
-    N : `xarray.DataArray`
-        Number density.
-    T : `xarray.DataArray`
-        Temperature tensor`.
-    
-    Returns
-    -------
-    P : `xarray.DataArray`
-        Pressure tensor
-    '''
-    kB = constants.k
-    eV2K = constants.value('electron volt-kelvin relationship')
-    
-    P = 1e15 * N * kB * eV2K * T
-    
-    return P
-
-
-def temperature_3D(f, mass, E0, N, V):
-    '''
-    Calculate the temperature tensor from a single 3D velocity space
-    distribution function.
-    
-    Notes
-    -----
-    This is needed because the azimuthal bin locations in the
-    burst data FPI distribution functions is time dependent. By
-    extracting single distributions, the phi, theta, and energy
-    variables become time-independent and easier to work with.
-    
-    Parameters
-    ----------
-    f : `xarray.DataArray`
-        A preconditioned 3D distribution function
-    mass : float
-        Mass (kg) of the particle species represented in the distribution.
-    E0 : float
-        Energy used to normalize the energy bins to [0, inf)
-    N : `xarray.DataArray`
-        Number density computed from `f`.
-    V : `xarray.DataArray`
-        Bulk velocity computed from `f`.
-    
-    Returns
-    -------
-    T : `xarray.DataArray`
-        Temperature tensor
-    '''
-    K2eV = constants.value('kelvin-electron volt relationship')
-    eV2J = constants.eV
-    kB = constants.k # J/k
-    
-    # Integrate over phi
-    Txx = (np.cos(f['phi'])**2 * f).integrate('phi')
-    Tyy = (np.sin(f['phi'])**2 * f).integrate('phi')
-    Tzz = f.integrate('phi')
-    Txy = (np.cos(f['phi']) * np.sin(f['phi']) * f).integrate('phi')
-    Txz = (np.cos(f['phi']) * f).integrate('phi')
-    Tyz = (np.sin(f['phi']) * f).integrate('phi')
-    
-    # Integrate over theta
-    Txx = (np.sin(Txx['theta'])**3 * Txx).integrate('theta')
-    Tyy = (np.sin(Tyy['theta'])**3 * Tyy).integrate('theta')
-    Tzz = (np.cos(Tzz['theta'])**2 * np.sin(Tzz['theta']) * Tzz).integrate('theta')
-    Txy = (np.sin(Txy['theta'])**3 * Txy).integrate('theta')
-    Txz = (np.cos(Txz['theta']) * np.sin(Txz['theta'])**2 * Txz).integrate('theta')
-    Tyz = (np.cos(Tyz['theta']) * np.sin(Tyz['theta'])**2 * Tyz).integrate('theta')
-    
-    # Combine into tensor
-    T = xr.concat([xr.concat([Txx, Txy, Txz], dim='t_index_dim1'),
-                   xr.concat([Txy, Tyy, Tyz], dim='t_index_dim1'),
-                   xr.concat([Txz, Tyz, Tzz], dim='t_index_dim1'),
-                   ], dim='t_index_dim2'
-                  )
-    T = T.assign_coords(t_index_dim1=['x', 'y', 'z'],
-                        t_index_dim2=['x', 'y', 'z'])
-    
-    # Integrate over energy
-    with np.errstate(divide='ignore', invalid='ignore'):
-        y = T['U']**(3/2) / (1 - T['U'])**(7/2)
-    y = y.where(np.isfinite(y), 0)
-    
-    coeff = 1e6 * (2/mass)**(3/2) / (N * kB / K2eV) * (E0*eV2J)**(5/2)
-    Vij = xr.concat([xr.concat([V[0]*V[0],
-                                V[0]*V[1],
-                                V[0]*V[2]], dim='t_index_dim1'),
-                     xr.concat([V[1]*V[0],
-                                V[1]*V[1],
-                                V[1]*V[2]], dim='t_index_dim1'),
-                     xr.concat([V[2]*V[0],
-                                V[2]*V[1],
-                                V[2]*V[2]], dim='t_index_dim1')
-                     ], dim='t_index_dim2'
-                    )
-    Vij = Vij.drop('velocity_index')
-    
-    T = coeff * (y * T).integrate('U')  - (1e6 * mass / kB * K2eV * Vij)
-    
-    return T
-
-
-def velocity_3D(f, mass, E0, N):
-    '''
-    Calculate the bulk velocity from a single 3D velocity space
-    distribution function.
-    
-    Notes
-    -----
-    This is needed because the azimuthal bin locations in the
-    burst data FPI distribution functions is time dependent. By
-    extracting single distributions, the phi, theta, and energy
-    variables become time-independent and easier to work with.
-    
-    Parameters
-    ----------
-    f : `xarray.DataArray`
-        A preconditioned 3D distribution function
-    mass : float
-        Mass (kg) of the particle species represented in the distribution.
-    E0 : float
-        Energy used to normalize the energy bins to [0, inf)
-    N : `xarray.DataArray`
-        Number density computed from `f`.
-    
-    Returns
-    -------
-    V : `xarray.DataArray`
-        Bulk velocity
-    '''
-    eV2J = constants.eV
-    
-    # Integrate over phi
-    vx = (np.cos(f['phi']) * f).integrate('phi')
-    vy = (np.sin(f['phi']) * f).integrate('phi')
-    vz = f.integrate('phi')
-    
-    # Integrate over theta
-    vx = (np.sin(vx['theta'])**2 * vx).integrate('theta')
-    vy = (np.sin(vy['theta'])**2 * vy).integrate('theta')
-    vz = (np.cos(vz['theta']) * np.sin(vz['theta']) * vz).integrate('theta')
-    V = xr.concat([vx, vy, vz], dim='velocity_index')
-    V = V.assign_coords({'velocity_index': ['Vx', 'Vy', 'Vz']})
-    
-    # Integrate over Energy
-    with np.errstate(divide='ignore', invalid='ignore'):
-        y = V['U'] / (1 - V['U'])**3
-    y = y.where(np.isfinite(y), 0)
-    
-    coeff = -1e3 * 2 * (eV2J * E0 / mass)**2 / N
-    V = coeff * (y * V).integrate('U')
-    return V
-
-
-def vspace_entropy_3D(f, mass, E0, N, s):
-    '''
-    Calculate velocity space entropy from a single 3D velocity space
-    distribution function. Because the 
-    
-    Notes
-    -----
-    This is needed because the azimuthal bin locations in the
-    burst data FPI distribution functions is time dependent. By
-    extracting single distributions, the phi, theta, and energy
-    variables become time-independent and easier to work with.
-    
-    Calculation of velocity and kinetic entropy can be found in
-    Liang, et al, PoP (2019) `[1]`_. The implementation here takes into
-    account the fact that the FPI energy bins are not equally spaced.
-    
-    .. [1]: Liang, H., Cassak, P. A., Servidio, S., Shay, M. A., Drake,
-        J. F., Swisdak, M., … Delzanno, G. L. (2019). Decomposition of
-        plasma kinetic entropy into position and velocity space and the
-        use of kinetic entropy in particle-in-cell simulations. Physics
-        of Plasmas, 26(8), 82903. https://doi.org/10.1063/1.5098888
-    
-    Parameters
-    ----------
-    f : `xarray.DataArray`
-        A preconditioned 3D distribution function
-    mass : float
-        Mass (kg) of the particle species represented in the distribution.
-    E0 : float
-        Energy (eV) used to normalize the energy bins to [0, inf)
-    
-    Returns
-    -------
-    S : `xarray.DataArray`
-        Velocity space entropy
-    '''
-    kB = constants.k # J/K
-    eV2J = constants.eV
-    
-    # Assume that the azimuth and polar angle bins are equal size
-    dtheta = f['theta'].diff(dim='theta').mean().item()
-    dphi = f['phi'].diff(dim='phi_index').mean().item()
-    
-    # Calculate the factors that associated with the normalized
-    # volume element
-    #   - U ranges from [0, inf] and np.inf/np.inf = nan
-    #   - Set the last element of y along U manually to 0
-    #   - log(0) = -inf; Zeros come from theta and y. Reset to zero
-    #   - Photo-electron correction can result in negative phase space
-    #     density. log(-1) = nan
-    coeff = np.sqrt(2) * (eV2J*E0/mass)**(3/2) # m^3/s^3
-    with np.errstate(invalid='ignore', divide='ignore'):
-        y = np.sqrt(f['U']) / (1 - f['U'])**(5/2)
-        lnydy = np.log(y * np.sin(f['theta']) * dtheta * dphi)
-    y = y.where(np.isfinite(y), 0)
-    lnydy = lnydy.where(np.isfinite(lnydy), 0)
-    
-    # Terms in that make up the velocity space entropy density
-    sv1 = s # J/K/m^3 ln(s^3/m^6) -- Already multiplied by -kB
-    sv2 = kB * (1e6*N) * np.log(1e6*N/coeff) # 1/m^3 * ln(1/m^3)
-
-    sv3 = (y * lnydy * f).integrate('phi')
-    sv3 = (np.sin(f['theta']) * sv3).integrate('theta')
-    sv3 = -1e12 * kB * coeff * sv3.integrate('U') # 1/m^3
-
-    sv4 = (y * f).integrate('phi')
-    sv4 = (np.sin(f['theta']) * sv4).integrate('theta')
-    sv4 = -1e12 * kB * coeff * Distribution_Function._trapz(sv4, sv4['U'])
-    
-    # Velocity space entropy density
-    sv = sv1 + sv2 + sv3 + sv4 # J/K/m^3
-    
-    return sv
-
-
-def density_4D(f, mass, E0):
-    '''
-    Calculate number density from a time series of 3D velocity space
-    distribution functions.
-    
-    Notes
-    -----
-    The FPI fast survey velocity distribution functions are time-independent
-    (1D) in azimuth and polar angles but time-dependent (2D) in energy. The
-    `xarray.DataArray.integrate` function works only with 1D data (phi and
-    theta). For energy, we can use `numpy.trapz`.
-    
-    Parameters
-    ----------
-    f : `xarray.DataArray`
-        A preconditioned 3D time-dependent velocity distribution function
-    mass : float
-        Mass (kg) of the particle species represented in the distribution.
-    E0 : float
-        Energy used to normalize the energy bins to [0, inf)
-    
-    Returns
-    -------
-    N : `xarray.DataArray`
-        Number density
-    '''
-    eV2J = constants.eV
-    
-    N = f.integrate('phi')
-    N = (np.sin(N['theta'])*N).integrate('theta')
-    
-    # Integrate over Energy
-    #   - U ranges from [0, inf] and np.inf/np.inf = nan
-    #   - Set the last element of the energy dimension of y to 0
-    with np.errstate(invalid='ignore', divide='ignore'):
-        y = np.sqrt(f['U']) / (1-f['U'])**(5/2)
-    y = y.where(np.isfinite(y.values), y, 0)
-    
-    coeff = 1e6 * np.sqrt(2) * (eV2J * E0 / mass)**(3/2)
-    N = coeff * np.trapz(y * N, y['U'], axis=y.get_axis_num('energy_index'))
-    N = xr.DataArray(N, dims='time', coords={'time': f['time']})
-    
-    return N
-
-
-def entropy_4D(f, mass, E0):
-    '''
-    Calculate entropy [1]_ from a time series of 3D velocity space
-    distribution functions.
-    
-    .. [1] Liang, H., Cassak, P. A., Servidio, S., Shay, M. A., Drake,
-        J. F., Swisdak, M., … Delzanno, G. L. (2019). Decomposition of
-        plasma kinetic entropy into position and velocity space and the
-        use of kinetic entropy in particle-in-cell simulations. Physics
-        of Plasmas, 26(8), 82903. https://doi.org/10.1063/1.5098888
-    
-    Notes
-    -----
-    The FPI fast survey velocity distribution functions are time-independent
-    (1D) in azimuth and polar angles but time-dependent (2D) in energy. The
-    `xarray.DataArray.integrate` function works only with 1D data (phi and
-    theta). For energy, we can use `numpy.trapz`.
-    
-    Parameters
-    ----------
-    f : `xarray.DataArray`
-        A preconditioned 3D time-dependent velocity distribution function
-    mass : float
-        Mass (kg) of the particle species represented in the distribution.
-    E0 : float
-        Energy used to normalize the energy bins to [0, inf)
-    
-    Returns
-    -------
-    S : `xarray.DataArray`
-        Velocity space entropy
-    '''
-    kB = constants.k # J/K
-    
-    # Integrate over phi and theta
-    #   - Measurement bins with zero counts result in a
-    #     phase space density of 0
-    #   - Photo-electron correction can result in negative
-    #     phase space density.
-    #   - Log of value <= 0 is nan. Avoid be replacing
-    #     with 1 so that log(1) = 0
-    S = 1e12 * f
-    S = S.where(S > 0, 1)
-    S = (S * np.log(S)).integrate('phi')
-    S = (np.sin(S['theta']) * S).integrate('theta')
-    
-    # Integrate over Energy
-    with np.errstate(invalid='ignore', divide='ignore'):
-        y = np.sqrt(S['U']) / (1 - S['U'])**(5/2)
-    y = y.where(np.isfinite(y.values), 0)
-    
-    coeff = -kB * np.sqrt(2) * (eV2J * E0 / mass)**(3/2)
-    S = coeff * np.trapz(y * S, y['U'], axis=y.get_axis_num('energy_index'))
-    
-    S = xr.DataArray(S, dims='time', coords={'time': f['time']})
-    
-    return S
-
-
 def epsilon_4D(f, mass, E0, f_max, N):
     '''
     Calculate the epsilon entropy parameter [1]_ from a time series of 3D
@@ -3006,362 +2873,3 @@ def epsilon_4D(f, mass, E0, f_max, N):
                )
     
     return epsilon
-
-
-def information_loss_4D(f_M, f, mass, E0, N, T):
-    '''
-    Calculate velocity space entropy density from a time series of 3D
-    velocity space distribution functions.
-    
-    Notes
-    -----
-    The FPI fast survey velocity distribution functions are time-independent
-    (1D) in azimuth and polar angles but time-dependent (2D) in energy. The
-    `xarray.DataArray.integrate` function works only with 1D data (phi and
-    theta). For energy, we can use `numpy.trapz`.
-    
-    Parameters
-    ----------
-    f : `xarray.DataArray`
-        A preconditioned 3D time-dependent velocity distribution function
-    mass : float
-        Mass (kg) of the particle species represented in the distribution.
-    E0 : float
-        Energy used to normalize the energy bins to [0, inf)
-    
-    Returns
-    -------
-    sv : `xarray.DataArray`
-        Velocity space entropy density
-    '''
-    kB = constants.k # J/K
-    eV2J = constants.eV
-    eV2K = constants.value('electron volt-kelvin relationship')
-    
-    # Assume that the azimuth and polar angle bins are equal size
-    dtheta = f['theta'].diff(dim='theta').mean().item()
-    dphi = f['phi'].diff(dim='phi').mean().item()
-    
-    # Calculate the factors that associated with the normalized
-    # volume element
-    #   - U ranges from [0, inf] and np.inf/np.inf = nan
-    #   - Set the last element of y along U manually to 0
-    #   - ln(0) = -inf; Zeros come from theta and y. Reset to zero
-    #   - Photo-electron correction can result in negative phase space
-    #     density. log(-1) = nan
-    with np.errstate(divide='ignore'):
-        y = (np.sqrt(f['U']) / (1 - f['U'])**(5/2))
-        lnydy = np.log(y * np.sin(f['theta']) * dtheta * dphi)
-    y = y.where(np.isfinite(y), 0)
-    lnydy = lnydy.where(np.isfinite(lnydy), 0)
-    
-    # Numerator
-    num_coeff = 1e6/(3*N) * (2*eV2J*E0/mass)**(3/2) # m^6/s^3
-    numerator = (y * lnydy * (f_M - f)).integrate('phi')
-    numerator = (np.sin(f['theta']) * numerator).integrate('theta')
-    numerator = num_coeff * np.trapz(numerator, axis=numerator.get_axis_num('energy_index'))
-    
-    # Denominator
-    d1 = 1
-    d2 = np.log(np.pi * kB * eV2K * T / (4 * eV2J * E0))
-    d3_coeff = 1e6/(3*N) * (2*eV2J*E0/mass)**(3/2)
-    d3 = (y * lnydy * f_M).integrate('phi')
-    d3 = (np.sin(f['theta']) * d3).integrate('theta')
-    d3 = d3_coeff * np.trapz(d3, axis=d3.get_axis_num('energy_index'))
-    denominator = d1 + d2 - d3
-    
-    return numerator, denominator
-
-
-def pressure_4D(N, T):
-    '''
-    Calculate the pressure tensor from a time series of 3D velocity space
-    distribution functions.
-    
-    Notes
-    -----
-    The FPI fast survey velocity distribution functions are time-independent
-    (1D) in azimuth and polar angles but time-dependent (2D) in energy. The
-    `xarray.DataArray.integrate` function works only with 1D data (phi and
-    theta). For energy, we can use `numpy.trapz`.
-    
-    Parameters
-    ----------
-    N : `xarray.DataArray`
-        Number density 
-    T : `xarray.DataArray`
-        Temperature tensor
-    
-    Returns
-    -------
-    P : `xarray.DataArray`
-        Pressure tensor
-    '''
-    kB = constants.k
-    eV2K = constants.value('electron volt-kelvin relationship')
-    
-    P = 1e15 * N * kB * eV2K * T
-    
-    return P
-
-
-def relative_entropy_4D(f_M, f, mass, E0):
-    '''
-    Calculate relative velocity space entropy density from a time series of 3D
-    velocity space distribution functions.
-    
-    Notes
-    -----
-    The FPI fast survey velocity distribution functions are time-independent
-    (1D) in azimuth and polar angles but time-dependent (2D) in energy. The
-    `xarray.DataArray.integrate` function works only with 1D data (phi and
-    theta). For energy, we can use `numpy.trapz`.
-    
-    Parameters
-    ----------
-    f : `xarray.DataArray`
-        A preconditioned 3D time-dependent velocity distribution function
-    mass : float
-        Mass (kg) of the particle species represented in the distribution.
-    E0 : float
-        Energy used to normalize the energy bins to [0, inf)
-    
-    Returns
-    -------
-    sv : `xarray.DataArray`
-        Velocity space entropy density
-    '''
-    kB = constants.k # J/K
-    eV2J = constants.eV
-    
-    # Integrate over phi and theta
-    #   - Measurement bins with zero counts result in a
-    #     phase space density of 0
-    #   - Photo-electron correction can result in negative
-    #     phase space density.
-    #   - Log of value <= 0 is nan. Avoid be replacing
-    #     with 1 so that log(1) = 0
-    S = f / f_M
-    S = S.where(S > 0, 1)
-    S = (f * np.log(S)).integrate('phi')
-    S = (np.sin(S['theta']) * S).integrate('theta')
-    
-    # Integrate over Energy
-    with np.errstate(invalid='ignore', divide='ignore'):
-        y = np.sqrt(S['U']) / (1 - S['U'])**(5/2)
-    y = y.where(np.isfinite(y.values), 0)
-    
-    coeff = -kB * np.sqrt(2) * (eV2J * E0 / mass)**(3/2)
-    S = coeff * np.trapz(y * S, y['U'], axis=y.get_axis_num('energy_index'))
-    
-    S = xr.DataArray(S, dims='time', coords={'time': f['time']})
-
-    return S
-
-def temperature_4D(f, mass, E0, N, V):
-    '''
-    Calculate the temperature tensor from a time series of 3D velocity space
-    distribution functions.
-    
-    Notes
-    -----
-    The FPI fast survey velocity distribution functions are time-independent
-    (1D) in azimuth and polar angles but time-dependent (2D) in energy. The
-    `xarray.DataArray.integrate` function works only with 1D data (phi and
-    theta). For energy, we can use `numpy.trapz`.
-    
-    Parameters
-    ----------
-    f : `xarray.DataArray`
-        A preconditioned 3D time-dependent velocity distribution function
-    mass : float
-        Mass (kg) of the particle species represented in the distribution.
-    E0 : float
-        Energy used to normalize the energy bins to [0, inf)
-    N : `xarray.DataArray`
-        Number density computed from `f`.
-    V : `xarray.DataArray`
-        Bulk velocity computed from `f`.
-    
-    Returns
-    -------
-    T : `xarray.DataArray`
-        Temperature tensor
-    '''
-    K2eV = constants.value('kelvin-electron volt relationship')
-    eV2J = constants.eV
-    kB = constants.k # J/k
-    
-    # Integrate over phi
-    Txx = (np.cos(f['phi'])**2 * f).integrate('phi')
-    Tyy = (np.sin(f['phi'])**2 * f).integrate('phi')
-    Tzz = f.integrate('phi')
-    Txy = (np.cos(f['phi']) * np.sin(f['phi']) * f).integrate('phi')
-    Txz = (np.cos(f['phi']) * f).integrate('phi')
-    Tyz = (np.sin(f['phi']) * f).integrate('phi')
-    
-    # Integrate over theta
-    Txx = (np.sin(Txx['theta'])**3 * Txx).integrate('theta')
-    Tyy = (np.sin(Tyy['theta'])**3 * Tyy).integrate('theta')
-    Tzz = (np.cos(Tzz['theta'])**2 * np.sin(Tzz['theta']) * Tzz).integrate('theta')
-    Txy = (np.sin(Txy['theta'])**3 * Txy).integrate('theta')
-    Txz = (np.cos(Txz['theta']) * np.sin(Txz['theta'])**2 * Txz).integrate('theta')
-    Tyz = (np.cos(Tyz['theta']) * np.sin(Tyz['theta'])**2 * Tyz).integrate('theta')
-    T = xr.concat([xr.concat([Txx, Txy, Txz], dim='t_index_dim1'),
-                   xr.concat([Txy, Tyy, Tyz], dim='t_index_dim1'),
-                   xr.concat([Txz, Tyz, Tzz], dim='t_index_dim1'),
-                   ], dim='t_index_dim2'
-                  )
-    
-    # Integrate over energy
-    with np.errstate(divide='ignore', invalid='ignore'):
-        y = T['U']**(3/2) / (1 - T['U'])**(7/2)
-    y = y.where(np.isfinite(y.values), 0)
-    
-    coeff = 1e6 * (2/mass)**(3/2) / (N * kB / K2eV) * (E0*eV2J)**(5/2)
-    
-    Vij = xr.concat([xr.concat([V[:,0]*V[:,0],
-                                V[:,0]*V[:,1],
-                                V[:,0]*V[:,2]], dim='t_index_dim1'),
-                     xr.concat([V[:,1]*V[:,0],
-                                V[:,1]*V[:,1],
-                                V[:,1]*V[:,2]], dim='t_index_dim1'),
-                     xr.concat([V[:,2]*V[:,0],
-                                V[:,2]*V[:,1],
-                                V[:,2]*V[:,2]], dim='t_index_dim1')
-                     ], dim='t_index_dim2'
-                    )
-    Vij = Vij.drop('velocity_index')
-    
-    T = (coeff.expand_dims(['t_index_dim1', 't_index_dim2'], axis=[1,2])
-         * np.trapz(y * T, T['U'].expand_dims(dim=['t_index_dim1', 't_index_dim2'],
-                                              axis=[2,3]),
-                    axis=T.get_axis_num('energy_index'))
-         - (1e6 * mass / kB * K2eV * Vij)
-         )
-    
-    T = T.assign_coords(t_index_dim1=['x', 'y', 'z'],
-                        t_index_dim2=['x', 'y', 'z'])
-    
-    return T
-
-
-def velocity_4D(f, mass, E0, N):
-    '''
-    Calculate the bulk velocity from a time series of 3D velocity space
-    distribution functions.
-    
-    Notes
-    -----
-    The FPI fast survey velocity distribution functions are time-independent
-    (1D) in azimuth and polar angles but time-dependent (2D) in energy. The
-    `xarray.DataArray.integrate` function works only with 1D data (phi and
-    theta). For energy, we can use `numpy.trapz`.
-    
-    Parameters
-    ----------
-    f : `xarray.DataArray`
-        A preconditioned 3D time-dependent velocity distribution function
-    mass : float
-        Mass (kg) of the particle species represented in the distribution.
-    E0 : float
-        Energy used to normalize the energy bins to [0, inf)
-    N : `xarray.DataArray`
-        Number density computed from `f`.
-    
-    Returns
-    -------
-    V : `xarray.DataArray`
-        Bulk velocity
-    '''
-    eV2J = constants.eV
-    
-    # Integrate over phi
-    vx = (np.cos(f['phi']) * f).integrate('phi')
-    vy = (np.sin(f['phi']) * f).integrate('phi')
-    vz = f.integrate('phi')
-    
-    # Integrate over theta
-    vx = (np.sin(vx['theta'])**2 * vx).integrate('theta')
-    vy = (np.sin(vy['theta'])**2 * vy).integrate('theta')
-    vz = (np.cos(vz['theta']) * np.sin(vz['theta']) * vz).integrate('theta')
-    V = xr.concat([vx, vy, vz], dim='velocity_index')
-    
-    # Integrate over Energy
-    with np.errstate(divide='ignore', invalid='ignore'):
-        y = V['U'] / (1 - V['U'])**3
-    y = y.where(np.finite(y.values), 0)
-    
-    coeff = -1e3 * 2 * (eV2J * E0 / mass)**2 / N
-    V = (coeff.expand_dims(dim='velocity_index', axis=1)
-         * np.trapz(y * V, y['U'].expand_dims(dim='velocity_index', axis=2),
-                    axis=y.get_axis_num('energy_index'))
-         )
-    V = V.assign_coords(velocity_index=['Vx', 'Vy', 'Vz'])
-    
-    return V
-
-
-def vspace_entropy_4D(f, mass, E0, N, s):
-    '''
-    Calculate velocity space entropy density from a time series of 3D
-    velocity space distribution functions.
-    
-    Notes
-    -----
-    The FPI fast survey velocity distribution functions are time-independent
-    (1D) in azimuth and polar angles but time-dependent (2D) in energy. The
-    `xarray.DataArray.integrate` function works only with 1D data (phi and
-    theta). For energy, we can use `numpy.trapz`.
-    
-    Parameters
-    ----------
-    f : `xarray.DataArray`
-        A preconditioned 3D time-dependent velocity distribution function
-    mass : float
-        Mass (kg) of the particle species represented in the distribution.
-    E0 : float
-        Energy used to normalize the energy bins to [0, inf)
-    
-    Returns
-    -------
-    sv : `xarray.DataArray`
-        Velocity space entropy density
-    '''
-    kB = constants.k # J/K
-    eV2J = constants.eV
-    
-    # Assume that the azimuth and polar angle bins are equal size
-    dtheta = f['theta'].diff(dim='theta').mean().item()
-    dphi = f['phi'].diff(dim='phi').mean().item()
-    
-    # Calculate the factors that associated with the normalized
-    # volume element
-    #   - U ranges from [0, inf] and np.inf/np.inf = nan
-    #   - Set the last element of y along U manually to 0
-    #   - ln(0) = -inf; Zeros come from theta and y. Reset to zero
-    #   - Photo-electron correction can result in negative phase space
-    #     density. log(-1) = nan
-    coeff = np.sqrt(2) * (eV2J*E0/mass)**(3/2) # m^3/s^3
-    with np.errstate(divide='ignore'):
-        y = (np.sqrt(f['U']) / (1 - f['U'])**(5/2))
-        lnydy = np.log(y * np.sin(f['theta']) * dtheta * dphi)
-    y = y.where(np.isfinite(y), 0)
-    lnydy = lnydy.where(np.isfinite(lnydy), 0)
-    
-    # Terms in that make up the velocity space entropy density
-    sv3 = s # J/K/m^3 ln(s^3/m^6) -- Already multiplied by -kB
-    sv2 = kB * (1e6*N) * np.log(1e6*N/coeff) # 1/m^3 * ln(1/m^3)
-    
-    sv3 = (y * lnydy * f).integrate('phi')
-    sv3 = (np.sin(f['theta']) * sv3).integrate('theta')
-    sv3 = -1e12 * kB * coeff * np.trapz(sv3, axis=sv3.get_axis_num('energy_index')) # 1/m^3
-    
-    sv4 = (y * f).integrate('phi')
-    sv4 = (np.sin(f['theta']) * sv4).integrate('theta')
-    sv4 = -1e12 * kB * coeff * Distribution_Function._trapz(sv4, sv4['U'])
-    
-    # Velocity space entropy density
-    sv = sv1 + sv2 + sv3 + sv4 # J/K/m^3
-    
-    return sv

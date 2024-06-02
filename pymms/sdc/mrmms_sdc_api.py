@@ -54,7 +54,7 @@ class MrMMS_SDC_API:
                  data_type='science',
                  end_date=None,
                  files=None,
-                 offline=False,
+                 offline=None,
                  optdesc=None,
                  product=None,
                  site='public',
@@ -72,7 +72,7 @@ class MrMMS_SDC_API:
         self.instr = instr
         self.level = level
         self.mode = mode
-        self.offline = offline
+        self.offline = pymms.config['offline'] if offline is None else offline
         self.optdesc = optdesc
         self.sc = sc
         self.start_date = start_date

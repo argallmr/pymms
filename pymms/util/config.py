@@ -58,7 +58,7 @@ def load_config():
         if os.name == 'nt':
             root = root.replace('/', '\\')
         config_dict[dirname] = root
-        
+
         # Create data download if not created
         if not os.path.isdir(root):
             print('Creating root data directory {}'.format(root))
@@ -66,12 +66,44 @@ def load_config():
 
     # login credentials
     for cred in ('username', 'password'):
-        config_dict[cred] = config['SDCLOGIN'][cred]
-        if config_dict[cred] == 'None':
-            config_dict[cred] = None
+        config_dict[cred] = string_to_value(config['SDCLOGIN'][cred])
 
-    config_dict['gls_root'] = config['GLS']['gls_root']
-    if config_dict['gls_root'] == 'None':
-        config_dict['gls_root'] = None
+    # Data options
+    for dcfg in ('offline',):
+        config_dict[dcfg] = string_to_value(config['DATA'][dcfg])
+
+    # GLS
+    config_dict['gls_root'] = string_to_value(config['GLS']['gls_root'])
 
     return config_dict
+
+
+def string_to_value(string):
+    '''
+    Convert strings to a value
+    
+    Parameters
+    ----------
+    string : str
+        String to be converted to a value
+           * 'None' -> None
+           * 'True' -> True
+           * 'False' -> False
+           * [other] -> [unchanged]
+    
+    Returns
+    -------
+    value
+        Value of `string`
+    '''
+
+    if string == 'None':
+        value = None
+    elif string == 'True':
+        value = True
+    elif string == 'False':
+        value = False
+    else:
+        value = string
+
+    return value

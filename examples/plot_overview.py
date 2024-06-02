@@ -186,6 +186,7 @@ def overview(sc, mode, start_date, end_date, **kwargs):
     
     fig.suptitle(sc.upper())
     plt.subplots_adjust(left=0.2, right=0.8, top=0.95, hspace=0.2)
+    plt.setp(axes, xlim=[start_date, end_date])
     return fig, axes
 
 

@@ -402,6 +402,10 @@ def cdf_load_var(cdf, varname):
     dims, coords = cdf_var_dims(cdf, varname, len(data.shape))
     
     try:
+        # Suppress annoying xarray warning about converting to datetime64[ns]
+        if np.issubdtype(data.dtype, np.datetime64):
+            data = data.astype('datetime64[ns]')
+
         da = xr.DataArray(data,
                           dims=dims,
                           coords=coords)
@@ -588,7 +592,7 @@ def cdf_attget(cdf, da):
 
 def load_data(sc='mms1', instr='fgm', mode='srvy', level='l2',
               optdesc=None, start_date=None, end_date=None,
-              offline=False, record_dim='Epoch', team_site=False,
+              offline=None, record_dim='Epoch', team_site=False,
               data_type='science', **kwargs):
     """
     Load MMS data.
@@ -638,6 +642,9 @@ def load_data(sc='mms1', instr='fgm', mode='srvy', level='l2',
     if team_site:
         site = 'private'
     
+    if offline is None:
+        offline = config['offline']
+
     # Download the data
     sdc = api.MrMMS_SDC_API(sc, instr, mode, level,
                             optdesc=optdesc,

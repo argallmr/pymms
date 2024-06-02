@@ -74,7 +74,7 @@ def load_data(sc='mms1', mode='srvy', level='l2',
         SCM data.
     """
     if mode == 'srvy':
-        optcesc = 'scsrvy'
+        optdesc = 'scsrvy'
     elif mode == 'slow':
         optdesc = 'scs'
     elif mode == 'fast':

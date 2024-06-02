@@ -129,11 +129,19 @@ def load_data(sc='mms1', mode='brst', level='l3', optdesc='8khz',
     if isinstance(data, list):
         t_delta_vname = '_'.join((sc, 'fsm', 'epoch', 'delta', mode, level))
         for idx, ds in enumerate(data):
-            data[idx] = (ds.assign_coords({t_delta_vname: ds['Epoch']})
-                           .reset_coords(t_delta_vname))
+            #t_delta = (ds[t_delta_vname]
+            #            .rename({t_delta_vname: 'Epoch'})
+            #            .assign_coords({'Epoch': ds['Epoch']})
+            #            )
+            #data[idx] = ds.assign_coords({t_delta_vname: t_delta})
+            data[idx] = ds.drop([t_delta_vname,])
         
         # Concatenate the dat
-        data = xr.concat(data, dim='Epoch')
+        try:
+            data = xr.concat(data, dim='Epoch')
+        except:
+            import pdb
+            pdb.set_trace()
     
     # Rename data variables to something simpler
     if rename_vars:

@@ -128,6 +128,111 @@ def rename(data, sc, mode, level, optdesc):
     elif optdesc == 'amb':
         pass
     
+    elif optdesc == 'amb-perp-ob':
+        time = 'Epoch'
+        flux1_90_gdu1_vname = '_'.join((sc, 'edi', 'flux1', '90', 'gdu1', mode, level))
+        flux2_90_gdu1_vname = '_'.join((sc, 'edi', 'flux2', '90', 'gdu1', mode, level))
+        flux3_90_gdu1_vname = '_'.join((sc, 'edi', 'flux3', '90', 'gdu1', mode, level))
+        flux4_90_gdu1_vname = '_'.join((sc, 'edi', 'flux4', '90', 'gdu1', mode, level))
+        
+        flux1_90_gdu2_vname = '_'.join((sc, 'edi', 'flux1', '90', 'gdu2', mode, level))
+        flux2_90_gdu2_vname = '_'.join((sc, 'edi', 'flux2', '90', 'gdu2', mode, level))
+        flux3_90_gdu2_vname = '_'.join((sc, 'edi', 'flux3', '90', 'gdu2', mode, level))
+        flux4_90_gdu2_vname = '_'.join((sc, 'edi', 'flux4', '90', 'gdu2', mode, level))
+        
+        traj1_90_dbcs_gdu1_vname = '_'.join((sc, 'edi', 'traj1', 'dbcs', '90', 'gdu1', mode, level))
+        traj2_90_dbcs_gdu1_vname = '_'.join((sc, 'edi', 'traj2', 'dbcs', '90', 'gdu1', mode, level))
+        traj3_90_dbcs_gdu1_vname = '_'.join((sc, 'edi', 'traj3', 'dbcs', '90', 'gdu1', mode, level))
+        traj4_90_dbcs_gdu1_vname = '_'.join((sc, 'edi', 'traj4', 'dbcs', '90', 'gdu1', mode, level))
+        
+        traj1_90_dbcs_gdu2_vname = '_'.join((sc, 'edi', 'traj1', 'dbcs', '90', 'gdu2', mode, level))
+        traj2_90_dbcs_gdu2_vname = '_'.join((sc, 'edi', 'traj2', 'dbcs', '90', 'gdu2', mode, level))
+        traj3_90_dbcs_gdu2_vname = '_'.join((sc, 'edi', 'traj3', 'dbcs', '90', 'gdu2', mode, level))
+        traj4_90_dbcs_gdu2_vname = '_'.join((sc, 'edi', 'traj4', 'dbcs', '90', 'gdu2', mode, level))
+        
+        traj1_90_gse_gdu1_vname = '_'.join((sc, 'edi', 'traj1', 'gse', '90', 'gdu1', mode, level))
+        traj2_90_gse_gdu1_vname = '_'.join((sc, 'edi', 'traj2', 'gse', '90', 'gdu1', mode, level))
+        traj3_90_gse_gdu1_vname = '_'.join((sc, 'edi', 'traj3', 'gse', '90', 'gdu1', mode, level))
+        traj4_90_gse_gdu1_vname = '_'.join((sc, 'edi', 'traj4', 'gse', '90', 'gdu1', mode, level))
+        
+        traj1_90_gse_gdu2_vname = '_'.join((sc, 'edi', 'traj1', 'gse', '90', 'gdu2', mode, level))
+        traj2_90_gse_gdu2_vname = '_'.join((sc, 'edi', 'traj2', 'gse', '90', 'gdu2', mode, level))
+        traj3_90_gse_gdu2_vname = '_'.join((sc, 'edi', 'traj3', 'gse', '90', 'gdu2', mode, level))
+        traj4_90_gse_gdu2_vname = '_'.join((sc, 'edi', 'traj4', 'gse', '90', 'gdu2', mode, level))
+        
+        traj1_90_dbcs_gdu1_labl_vname = '_'.join((sc, 'edi', 'traj1', 'dbcs', '90', 'gdu1', 'labl', mode, level))
+        traj2_90_dbcs_gdu1_labl_vname = '_'.join((sc, 'edi', 'traj2', 'dbcs', '90', 'gdu1', 'labl', mode, level))
+        traj3_90_dbcs_gdu1_labl_vname = '_'.join((sc, 'edi', 'traj3', 'dbcs', '90', 'gdu1', 'labl', mode, level))
+        traj4_90_dbcs_gdu1_labl_vname = '_'.join((sc, 'edi', 'traj4', 'dbcs', '90', 'gdu1', 'labl', mode, level))
+        
+        traj1_90_dbcs_gdu2_labl_vname = '_'.join((sc, 'edi', 'traj1', 'dbcs', '90', 'gdu2', 'labl', mode, level))
+        traj2_90_dbcs_gdu2_labl_vname = '_'.join((sc, 'edi', 'traj2', 'dbcs', '90', 'gdu2', 'labl', mode, level))
+        traj3_90_dbcs_gdu2_labl_vname = '_'.join((sc, 'edi', 'traj3', 'dbcs', '90', 'gdu2', 'labl', mode, level))
+        traj4_90_dbcs_gdu2_labl_vname = '_'.join((sc, 'edi', 'traj4', 'dbcs', '90', 'gdu2', 'labl', mode, level))
+        
+        traj1_90_gse_gdu1_labl_vname = '_'.join((sc, 'edi', 'traj1', 'gse', '90', 'gdu1', 'labl', mode, level))
+        traj2_90_gse_gdu1_labl_vname = '_'.join((sc, 'edi', 'traj2', 'gse', '90', 'gdu1', 'labl', mode, level))
+        traj3_90_gse_gdu1_labl_vname = '_'.join((sc, 'edi', 'traj3', 'gse', '90', 'gdu1', 'labl', mode, level))
+        traj4_90_gse_gdu1_labl_vname = '_'.join((sc, 'edi', 'traj4', 'gse', '90', 'gdu1', 'labl', mode, level))
+        
+        traj1_90_gse_gdu2_labl_vname = '_'.join((sc, 'edi', 'traj1', 'gse', '90', 'gdu2', 'labl', mode, level))
+        traj2_90_gse_gdu2_labl_vname = '_'.join((sc, 'edi', 'traj2', 'gse', '90', 'gdu2', 'labl', mode, level))
+        traj3_90_gse_gdu2_labl_vname = '_'.join((sc, 'edi', 'traj3', 'gse', '90', 'gdu2', 'labl', mode, level))
+        traj4_90_gse_gdu2_labl_vname = '_'.join((sc, 'edi', 'traj4', 'gse', '90', 'gdu2', 'labl', mode, level))
+
+        vnames = {time: 'time',
+                  flux1_90_gdu1_vname: 'flux1_90_gdu1',
+                  flux2_90_gdu1_vname: 'flux2_90_gdu1',
+                  flux3_90_gdu1_vname: 'flux3_90_gdu1',
+                  flux4_90_gdu1_vname: 'flux4_90_gdu1',
+                  flux1_90_gdu2_vname: 'flux1_90_gdu2',
+                  flux2_90_gdu2_vname: 'flux2_90_gdu2',
+                  flux3_90_gdu2_vname: 'flux3_90_gdu2',
+                  flux4_90_gdu2_vname: 'flux4_90_gdu2',
+                  traj1_90_dbcs_gdu1_vname: 'traj1_90_dbcs_gdu1',
+                  traj2_90_dbcs_gdu1_vname: 'traj2_90_dbcs_gdu1',
+                  traj3_90_dbcs_gdu1_vname: 'traj3_90_dbcs_gdu1',
+                  traj4_90_dbcs_gdu1_vname: 'traj4_90_dbcs_gdu1',
+                  traj1_90_dbcs_gdu2_vname: 'traj1_90_dbcs_gdu2',
+                  traj2_90_dbcs_gdu2_vname: 'traj2_90_dbcs_gdu2',
+                  traj3_90_dbcs_gdu2_vname: 'traj3_90_dbcs_gdu2',
+                  traj4_90_dbcs_gdu2_vname: 'traj4_90_dbcs_gdu2',
+                  traj1_90_gse_gdu1_vname: 'traj1_90_gse_gdu1',
+                  traj2_90_gse_gdu1_vname: 'traj2_90_gse_gdu1',
+                  traj3_90_gse_gdu1_vname: 'traj3_90_gse_gdu1',
+                  traj4_90_gse_gdu1_vname: 'traj4_90_gse_gdu1',
+                  traj1_90_gse_gdu2_vname: 'traj1_90_gse_gdu2',
+                  traj2_90_gse_gdu2_vname: 'traj2_90_gse_gdu2',
+                  traj3_90_gse_gdu2_vname: 'traj3_90_gse_gdu2',
+                  traj4_90_gse_gdu2_vname: 'traj4_90_gse_gdu2'}
+        
+        labels = {traj1_90_dbcs_gdu1_labl_vname: 'DBCS',
+                  traj2_90_dbcs_gdu1_labl_vname: 'DBCS',
+                  traj3_90_dbcs_gdu1_labl_vname: 'DBCS',
+                  traj4_90_dbcs_gdu1_labl_vname: 'DBCS',
+                  traj1_90_dbcs_gdu2_labl_vname: 'DBCS',
+                  traj2_90_dbcs_gdu2_labl_vname: 'DBCS',
+                  traj3_90_dbcs_gdu2_labl_vname: 'DBCS',
+                  traj4_90_dbcs_gdu2_labl_vname: 'DBCS',
+                  traj1_90_gse_gdu1_labl_vname: 'GSE',
+                  traj2_90_gse_gdu1_labl_vname: 'GSE',
+                  traj3_90_gse_gdu1_labl_vname: 'GSE',
+                  traj4_90_gse_gdu1_labl_vname: 'GSE',
+                  traj1_90_gse_gdu2_labl_vname: 'GSE',
+                  traj2_90_gse_gdu2_labl_vname: 'GSE',
+                  traj3_90_gse_gdu2_labl_vname: 'GSE',
+                  traj4_90_gse_gdu2_labl_vname: 'GSE'}
+        
+        coords = {'DBCS': ['phi', 'theta'],
+                  'GSE': ['phi', 'theta']}
+        
+        names = {key:val for key, val in vnames.items() if key in data}
+        labels = {key:val for key, val in labels.items() if key in data}
+        data = data.drop(labels)
+        names.update(labels)
+        data = (data.rename(names)
+                    .assign_coords(coords))
+
     else:
         raise ValueError('Optional descriptor not recognized: "{0}"'
                          .format(optdesc))
@@ -268,8 +373,6 @@ def load_data(sc='mms1', mode='srvy', level='l2', optdesc='efield',
                               end_date=end_date, **kwargs)
         
         # Verify some things
-        import pdb
-        pdb.set_trace()
         if len(w) > 0:
             data = prune_time_overlap(data, start_date, end_date)
     
