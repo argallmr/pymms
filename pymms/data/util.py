@@ -317,14 +317,14 @@ def check_variables(cdf, variables, varformat, data_vars):
         if data_vars:
             vartype = 'data '
         raise NoVariablesInFileError('The file contains no {0}variables: '
-            '{1}'.format(vartype, cdf.cdf_info()['CDF']))
+            '{1}'.format(vartype, cdf.cdf_info().CDF))
 
     # Read the given variables
     if variables is not None:
         not_found = [v for v in variables if v not in all_variables]
         if len(not_found) > 0:
             raise VariablesNotFoundError('Variable names {0} not found '
-                'in file {1}'.format(not_found, cdf.cdf_info()['CDF']))
+                'in file {1}'.format(not_found, cdf.cdf_info().CDF))
         varnames = variables
     
     # Match regular expression(s)
