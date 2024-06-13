@@ -7,6 +7,33 @@ The format is based on `Keep a Changelog`_, and this project adheres to `Semanti
 .. _Keep a Changelog https://keepachangelog.com/en/1.0.0/
 .. _Semantic Versioning https://semver.org/spec/v2.0.0.html
 
+v0.4.7
+------
+Added
+^^^^^
+* fpi.relative_entropy
+* offline flag to config file that is checked before loading data
+* rotation from GEI to despun s/c coordinates
+
+Updated
+^^^^^^^
+* Dependencies: numpy >= 1.24; cdflib >= 1.0.0; matplotlib >= 3.4
+* Single function for calculating moments speeds up moment caluclations in burst mode
+* Distribution_Function can be rotated, rebinned, reduced, and plotted
+* Maxwellian look-up tables now has logarithmic spacing so error independent of n, table
+* aesthetics in example plots
+
+Fixed
+^^^^^
+* Rec_Vary CDF attribute changed from bool to int8. Bool not accepted by netCDF
+* Convert datetime64 to nanoseconds to avoid xarray conversion warning
+* Many bugs
+
+Backwards Incompatible
+^^^^^^^^^^^^^^^^^^^^^^
+* Density keyword N renamed to n to conform with standard physical meaning
+
+
 v0.4.6
 ------
 Added
