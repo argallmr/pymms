@@ -137,11 +137,7 @@ def load_data(sc='mms1', mode='brst', level='l3', optdesc='8khz',
             data[idx] = ds.drop([t_delta_vname,])
         
         # Concatenate the dat
-        try:
-            data = xr.concat(data, dim='Epoch')
-        except:
-            import pdb
-            pdb.set_trace()
+        data = xr.concat(data, dim='Epoch')
     
     # Rename data variables to something simpler
     if rename_vars:

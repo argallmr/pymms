@@ -6,6 +6,9 @@ import xarray as xr
 from scipy import constants
 import warnings
 
+# Distribution function
+from matplotlib import pyplot as plt
+
 # Maxwellian look-up table
 import pandas as pd
 
@@ -406,11 +409,64 @@ class Distribution_Function():
             if len(value) != self.f.shape[2]:
                 raise ValueError('energy must have same length as f.size[2]: '
                                  '{0} vs. {1}'
-                                 .format(len(energy), self.f.shape[2]))
+                                 .format(len(value), self.f.shape[2]))
 
         # Set the value
         super().__setattr__(name, value)
     
+    @classmethod
+    def from_fpi(cls, f, time=None, **kwargs):
+        '''
+        Create a distribution function object from an MMS FPI distribution
+        function.
+
+        Parameters
+        ----------
+        f : (N,M,L), `xarray.DataArray`
+            The velocity space distribution as a function of azimuth, polar,
+            and energy coordinates. Units should be be s^3/cm^6.
+        time : `numpy.datetime64['ns']`
+            Time at which the distribution was measured
+        **kwargs : dict
+            Preconditioning keywords accepted by the class. If not provided,
+            an attempt will be made to extract them from the attributes of `f`
+        
+        Returns
+        -------
+        vdf : `Distribution_Function`
+            An instance of the class
+        '''
+        
+        # Create the distribution function
+        vdf = cls(f.data, f['phi'], f['theta'], f['energy'],
+                  mass=species_to_mass(f.attrs['species']),
+                  time=time, **kwargs)
+
+        # The distribution function has already been preconditioned
+        #   - Normally, the original and preconditioned data are stored
+        #     as separate properties. In this case we have no knowledge of the
+        #     un-preconditioned data
+        if 'Energy_e0' in f.attrs:
+            vdf.wrap_phi = f.attrs['wrap_phi']
+            vdf.theta_extrapolation = f.attrs['theta_extrapolation']
+            vdf.E0 = f.attrs['Energy_e0']
+            vdf.E_low = f.attrs['Lower_energy_integration_limit']
+            vdf.E_high = f.attrs['Upper_energy_integration_limit']
+            vdf.low_energy_extrapolation = f.attrs['low_energy_extrapolation']
+            vdf.high_energy_extrapolation = f.attrs['high_energy_extrapolation']
+            
+            # Energy bins have already been adjusted
+            vdf.scpot = None
+
+            vdf._f = vdf.f
+            vdf._phi = vdf.phi
+            vdf._energy = vdf.energy
+            vdf._U = f['U']
+            vdf._is_preconditioned = True
+        
+        vdf.precondition()
+        return vdf
+
     def maxwellian(self, N=None, V=None, T=None):
         
         # Need adjusted velocity-space bins
@@ -554,6 +610,24 @@ class Distribution_Function():
         self._U = U
         self._f = f
         self._is_preconditioned = True
+    
+    def copy(self):
+        self.precondition()
+        
+        # Do not supply scpot, E0, E_low, E_high because the energy bins
+        # have already been adjusted.
+        df = Distribution_Function(self.f, self.phi, self.theta, self.energy,
+                                   self.mass, E0=self.E0, E_low=None,
+                                   low_energy_extrapolation=False,
+                                   high_energy_extrapolation=False)
+        
+        # Preconditioning properties
+        df._f = self._f
+        df._phi = self._phi
+        df._theta = self._theta
+        df._energy = self._energy
+        df._U = self._U
+        df._is_preconditioned = True
         
     def density(self):
         
@@ -580,7 +654,7 @@ class Distribution_Function():
         #     phase space density of 0
         #   - Photo-electron correction can result in negative
         #     phase space density.
-        #   - Log of value <= 0 is nan. Avoid be replacing
+        #   - Log of value <= 0 is nan. Avoid by replacing
         #     with 1 so that log(1) = 0
         S = 1e12 * self._f
         S = np.where(S > 0, S, 1)
@@ -621,6 +695,327 @@ class Distribution_Function():
     
         return epsilon
     
+    def deltaE(self):
+        '''
+        Compute the size of each energy bin
+        
+        dE/E = const -> d(lnE) = const -> d[log(E) / log(exp)]
+
+        So, dE = E * dlogE / log(exp)
+
+        Return
+        ------
+        dE : `numpy.ndarray`
+            Size of each energy bin
+        '''
+        
+        dlogE = np.log10(self.energy[1]) - np.log10(self.energy[0])
+        dE = self.energy * dlogE / np.log10(np.exp(1))
+
+        return dE
+
+    def rebin(self):
+        
+        # Normal bin spacing
+        phi_bins = np.linspace(0, 360, 33)
+        theta_bins = np.linspace(0, 180, 17)
+
+        
+    
+    def reduce(self, rtype, **kwargs):
+        '''
+        Create a reduce 1D or 2D distribution
+
+        Parameters
+        ----------
+        rtype : str
+            Type of reduced distribution to create. Options are:
+            ('phi', 'theta', 'E', 'theta-phi', 'phi-E', 'theta-E')
+        
+        Returns
+        -------
+        f : `xarray.DataArray`
+            Reduced distribution
+        '''
+        rtypes = ('phi', 'theta', 'E', 'theta-phi', 'phi-E', 'theta-E')
+
+        if rtype == 'phi':
+            f = self._reduce_phi(**kwargs)
+        elif rtype == 'theta':
+            f = self._reduce_theta(**kwargs)
+        elif rtype == 'E':
+            f = self._reduce_E(**kwargs)
+        elif rtype == 'phi-theta':
+            f = self._reduce_theta_phi(**kwargs)
+        elif rtype == 'phi-E':
+            f = self._reduce_phi_E(**kwargs)
+        elif rtype == 'theta-E':
+            f = self._reduce_theta_E(**kwargs)
+        else:
+            raise ValueError('rtype must be {0}, not {1}'.format(rtypes, rtype))
+
+        return f
+    
+    def _reduce_E(self, dphi=None, dtheta=None):
+        '''
+        Calculate the reduced 1D distribution, f(E), by averaging
+        over the theta- and phi-direction
+
+        Note: f must have units of phase space density
+
+        Returns
+        -------
+        f : `numpy.ndarray`
+            Reduced 1D distribution function as a function of energy
+        '''
+        # Assume theta and phi are equally sized/spaced bins
+        if dphi is None:
+            dphi = np.diff(self.phi[:,0]).mean()
+        if dtheta is None:
+            dtheta = np.diff(self.theta[0,:]).mean()
+
+        # Weight for averaging reduced distribution
+        #   - Volume of each cell = dv * v*dtheta * v*sin(theta)*dphi)
+        #   - weighted_mean = np.sum(w*x) / np.sum(w)
+        #   - Cells are weighted by their volume
+        #   - w = v**2 * sin(theta) * dv * dtheta * dphi
+        #   - v and dv are constant in sums over phi and theta
+        #   => w = sin(theta) * dtheta * dphi
+        w = np.sin(np.deg2rad(self.theta)) * dphi * dtheta
+        w = w[..., np.newaxis]
+
+        # Average over phi and theta
+        #   - f(phi, theta, v)
+        f = np.sum(np.sum(w * self.f, axis=0), axis=0) / np.sum(w)
+        
+        f = xr.DataArray(f,
+                         dims=('energy',),
+                         coords={'energy': self.energy})
+
+        return f
+
+    def _reduce_phi(self, dphi=None, dtheta=None):
+        '''
+        Calculate the reduced 1D distribution, f(phi), by averaging
+        over theta and velocity
+
+        Note: f must have units of phase space density (s^3/cm^6)
+
+        Returns
+        -------
+        f : `numpy.ndarray`
+            Reduced 1D distribution function as a function of energy
+        '''
+        if dphi is None:
+            dphi = np.diff(self.phi[:,0]).mean()
+        if dtheta is None:
+            dphi = np.diff(self.theta[0,:]).mean()
+        
+        v_sqr = 2*eV2J*self.energy/self.mass * 1e4 # (cm/s)**2
+        dE = self.deltaE()
+        # Separate mass from energy terms to prevent over/underflow
+        dv = 1/np.sqrt(f.mass) * 1/np.sqrt((2*eV2J*self.energy)) * eV2J*dE * 1e2 # cm/s
+
+        # Weight for averaging reduced distribution
+        #   - Volume of each cell = dv * v*dtheta * v*sin(theta)*dphi)
+        #   - weighted_mean = np.sum(w*x) / np.sum(w)
+        #   - Cells are weighted by their volume
+        #   - w = v**2 * sin(theta) * dv * dtheta * dphi
+        #   - dphi is constant in sums over v and theta
+        #   => w = v**2 * sin(theta) * dv * dtheta
+        w = (v_sqr[np.newaxis, np.newaxis, :]
+             * dv[np.newaxis, np.newaxis, :]
+             * np.sin(np.deg2rad(self.theta))[:,:,np.newaxis]
+             * dtheta
+             )
+
+        # Average over theta and v for the 1D reduced distribution
+        #   - f(phi, theta, v)
+        f = np.sum(np.sum(w * self.f, axis=1), axis=1) / np.sum(w)
+
+        f = xr.DataArray(f,
+                         dims=('phi',),
+                         coords={'phi': self.phi})
+
+        return f
+
+    def _reduce_theta_phi(self):
+        '''
+        Calculate the reduced 2D distribution, f(phi, theta), by averaging
+        over E
+
+        Note: f must have units of phase space density
+
+        Returns
+        -------
+        f : `numpy.ndarray`
+            Reduced 2D distribution function as a function of phi and energy
+        '''
+        v_sqr = 2*eV2J*self.energy/self.mass * 1e4 # (cm/s)**2
+        dE = self.deltaE()
+        # Separate mass from energy terms to prevent over/underflow
+        dv = 1/np.sqrt(f.mass) * 1/np.sqrt((2*eV2J*self.energy)) * eV2J*dE * 1e2 # cm/s
+
+        # Weight for averaging reduced distribution
+        #   - Volume of each cell = dv * v*dtheta * v*sin(theta)*dphi)
+        #   - weighted_mean = np.sum(w*x) / np.sum(w)
+        #   - Cells are weighted by their volume
+        #   - w = v**2 * sin(theta) * dv * dtheta * dphi
+        #   - theta, dtheta, dphi are constant in sums over v
+        #   => w = v**2 * dv
+        w = (v_sqr * dv)[np.newaxis, np.newaxis, :]
+
+        # Average over v & phi for the 1D reduced distribution
+        #   - f(phi, theta, v)
+        f = np.sum(w * self.f, axis=2) / np.sum(w)
+
+        f = xr.DataArray(f,
+                         dims=('phi', 'theta'),
+                         coords={'phi': self.phi,
+                                 'theta': self.theta})
+
+        return f
+
+    def _reduce_phi_E(self, dtheta=None):
+        '''
+        Calculate the reduced 2D distribution, f(phi, E), by averaging
+        over theta
+
+        Note: f must have units of phase space density
+
+        Returns
+        -------
+        f : `numpy.ndarray`
+            Reduced 2D distribution function as a function of phi and energy
+        '''
+        # Assume theta are equally sized/spaced bins
+        if dtheta is None:
+            dtheta = np.diff(self.theta[0,:]).mean()
+
+        v = np.sqrt(2*eV2J*self.energy/self.mass) * 1e2 # cm/s
+        dE = self.deltaE()
+        # Separate mass from energy terms to prevent over/underflow
+        dv = 1/np.sqrt(self.mass) * 1/np.sqrt((2*eV2J*self.energy)) * eV2J*dE * 1e2 # cm/s
+
+        # Weight for averaging reduced distribution
+        #   - Volume of each cell = dv * v*dtheta * v*sin(theta)*dphi)
+        #   - weighted_mean = np.sum(w*x) / np.sum(w)
+        #   - Cells are weighted by their volume
+        #   - w = v**2 * sin(theta) * dv * dtheta * dphi
+        #   - v, dv, dphi are constant in sums over theta
+        #   => w = sin(theta) * dtheta
+        w = np.sin(np.deg2rad(self.theta)) * dtheta
+        w = w[:, :, np.newaxis]
+
+        # Average over v & phi for the 1D reduced distribution
+        #   - f(phi, theta, v)
+        f = np.sum(w * self.f, axis=1) / np.sum(w)
+
+        f = xr.DataArray(f,
+                         dims=['phi', 'energy'],
+                         coords={'phi': xr.DataArray((('phi', 'theta'), self.phi)),
+                                 'energy': self.energy})
+
+        return f
+
+    def _reduce_theta(self, dphi=None):
+        '''
+        Calculate the reduced 1D distribution, f(phi), by averaging
+        over theta and velocity
+
+        Note: f must have units of phase space density
+
+        Returns
+        -------
+        f : `numpy.ndarray`
+            Reduced 1D distribution function as a function of energy
+        '''
+        # Assume theta and phi are equally sized/spaced bins
+        if dphi is None:
+            dphi = np.diff(self.phi[:,0]).mean()
+        
+        v_sqr = 2*eV2J*self.energy/self.mass * 1e4 # (cm/s)**2
+        dE = self.deltaE()
+        # Separate mass from energy terms to prevent over/underflow
+        dv = 1/np.sqrt(f.mass) * 1/np.sqrt((2*eV2J*self.energy)) * eV2J*dE * 1e2 # cm/s
+
+        # Weight for averaging reduced distribution
+        #   - Volume of each cell = dv * v*dtheta * v*sin(theta)*dphi)
+        #   - weighted_mean = np.sum(w*x) / np.sum(w)
+        #   - Cells are weighted by their volume
+        #   - w = v**2 * sin(theta) * dv * dtheta * dphi
+        #   - theta, dtheta are constant in sums over v and phi
+        #   => w = v**2 * dv * dphi
+        
+        # dphi is scalar
+        try:
+            w = (v_sqr * dv * dphi)[np.newaxis, np.newaxis, :]
+        # dphi is 2D [nPhi x nTheta]
+        except ValueError:
+            w = ((v_sqr * dv)[np.newaxis, np.newaxis, :]
+                 * dphi[:, :, np.newaxis]
+                 )
+
+        # Average over v & phi for the 1D reduced distribution
+        #   - f(phi, theta, v)
+        f = np.sum(np.sum(w * self.f, axis=0), axis=1) / np.sum(w)
+
+        f = xr.DataArray(f,
+                         dims=('theta',),
+                         coords={'theta': self.theta})
+
+        return f
+
+    def _reduce_theta_E(self):
+        '''
+        Calculate the reduced 2D distribution, f(theta, E), by averaging
+        over phi
+
+        Note: f must have units of phase space density
+
+        Returns
+        -------
+        f : `numpy.ndarray`
+            Reduced 1D distribution function as a function of energy
+        '''
+        # Assume theta and phi are equally sized/spaced bins
+        if dphi is None:
+            dphi = np.diff(self.phi[:,0]).mean()
+        
+        v_sqr = 2*eV2J*self.energy/self.mass * 1e4 # (cm/s)**2
+        dE = self.deltaE()
+        # Separate mass from energy terms to prevent over/underflow
+        dv = 1/np.sqrt(f.mass) * 1/np.sqrt((2*eV2J*self.energy)) * eV2J*dE * 1e2 # cm/s
+
+        # Weight for averaging reduced distribution
+        #   - Volume of each cell = dv * v*dtheta * v*sin(theta)*dphi)
+        #   - weighted_mean = np.sum(w*x) / np.sum(w)
+        #   - Cells are weighted by their volume
+        #   - w = v**2 * sin(theta) * dv * dtheta * dphi
+        #   - dphi is constant in sum over phi
+        #   => w = v**2 * sin(theta) * dv * dtheta
+        w = ((v_sqr * dv)[np.newaxis, np.newaxis, :]
+             * np.sin(np.deg2rad(np.theta))[:, :, np.newaxis]
+             )
+        
+        # dphi is scalar
+        try:
+            w = w * dphi
+        # dphi is 2D: nPhi x nTheta
+        except ValueError:
+            w = w * dphi[:, :, np.newaxis]
+
+        # Average over phi for the 1D reduced distribution
+        #   - f(phi, theta, v)
+        f = np.sum(w * self.f, axis=0) / np.sum(w)
+
+        f = xr.DataArray(f,
+                         dims=('theta', 'energy'),
+                         coords={'theta': self.theta,
+                                 'energy': self.energy})
+
+        return f
+
     def information_loss(self, fM=None, N=None, T=None):
         if N is None:
             N = self.density()
@@ -691,6 +1086,28 @@ class Distribution_Function():
         P = 1e15 * N * kB * eV2K * T
     
         return P
+
+    def scalar_temperature(self, N=None, V=None, T=None):
+        '''
+        Calculate the scalar temperature
+
+        Parameters
+        ----------
+        N : (1,), float
+            Density of `f`. If not present, it is calculated
+        V : (3,), float
+            Density of `f`. If not present, it is calculated
+        T : (3,3), float
+            Temperature tensor of `f`. If not present, it is calculated
+        
+        Returns
+        -------
+        t : (1,), float
+            Scalar temperature calculated from `f`
+        '''
+        if T is None:
+            T = self.temperature(N=N, V=V)
+        return (T[0,0] + T[1,1] + T[2,2]) / 3.0
     
     def temperature(self, N=None, V=None):
         self.precondition()
@@ -819,6 +1236,172 @@ class Distribution_Function():
         F = np.where(np.isfinite(F), F, 0)
         
         return np.sum(F)
+    
+    @staticmethod
+    def sphr2cart(phi, theta):
+        '''
+        Convert look directions from spherical to polar coordinates.
+
+        Returns
+        -------
+        x, y, z : `numpy.ndarray`
+            Cartesian components of particle incident trajectories (opposite
+            the instrument look direction)
+        '''
+        phi = np.deg2rad(phi)
+        theta = np.deg2rad(theta)
+
+        x = np.sin(theta) * np.cos(phi)
+        y = np.sin(theta) * np.sin(phi)
+        z = np.cos(theta)
+
+        return x, y, z
+    
+    @staticmethod
+    def cart2sphr(x, y, z, orientation=1):
+        '''
+        Convert cartesian coordinates to spherical coordinates.
+
+        Parameters
+        ----------
+        x, y, z : `numpy.ndarray`
+            Cartesian coordinates
+        orientation : int
+            Orientation of the spherical axes
+                1: PHI   - Positive from x-axis
+                   THETA - Polar angle from z-axis
+                2: PHI   - Positive from y-axis
+                   THETA - Polar angle from z-axis
+                3: PHI   - Positive from x-axis
+                   THETA - Elevation angle from xy-plane
+                4: PHI   - Positive from y-axis
+                   THETA - Elevation angle from xy-plane
+                5: PHI   - Positive from z-axis
+                   THETA - Polar angle from y-axis
+                6: PHI   - Positive from x-axis
+                   THETA - Polar angle from y-axis
+                7: PHI   - Positive from z-axis
+                   THETA - Elevation angle from zx-plane
+                8: PHI   - Positive from x-axis
+                   THETA - Elevation angle from zx-plane
+                9: PHI   - Positive from y-axis
+                   THETA - Polar angle from x-axis
+                10: PHI   - Positive from z-axis
+                    THETA - Polar angle from x-axis
+                11: PHI   - Positive from y-axis
+                    THETA - Elevation angle from yz-plane
+                12: PHI   - Positive from z-axis
+                    THETA - Elevation angle from yz-plane
+        
+        Returns
+        -------
+        theta, phi : `numpy.ndarray`
+            Spherical coordinate unit vectors (|r| = 1)
+        '''
+        r = np.sqrt(x**2 + y**2 + z**2)
+
+        # Phi   - positive from x-axis            (-180, 180]
+        # Theta - Polar angle from z-axis         [0, 180]
+        if orientation == 1:
+            phi = np.arctan2(y, x)
+            theta = np.arccos(z / r) # or np.arctan2(x**2 + y**2, z)
+        
+        # Phi   - positive from y-axis            (-180, 180]
+        # Theta - Polar angle from z-axis         [0, 180]
+        elif orientation == 2:
+            phi = np.arctan2(-x, y)
+            theta = np.arccos(z / r) # or np.arctan2(x**2 + y**2, z)
+        
+        # Phi   - positive from x-axis            (-180, 180]
+        # Theta - elevation angle from xy-plane   [-90, 90]
+        elif orientation == 3:
+            phi = np.arctan2(y, x)
+            theta = np.arcsin(z, r)
+        
+        # Phi   - positive from y-axis            (-180, 180]
+        # Theta - elevation angle from xy-plane   [-90, 90]
+        elif orientation == 4:
+            phi = np.arctan2(-x, y)
+            theta = np.arcsin(z, r)
+        
+        # Phi   - positive from z-axis            (-180, 180]
+        # Theta - polar angle from y-axis         [0, 180]
+        elif orientation == 5:
+            phi = np.arctan2(x, z)
+            theta = np.arccos(y, r)
+        
+        # Phi   - positive from x-axis            (-180, 180]
+        # Theta - polar angle from y-plane        [0, 180]
+        elif orientation == 6:
+            phi = np.arctan2(-z, x)
+            theta = np.arccos(y, r)
+        
+        # Phi   - positive from z-axis            (-180, 180]
+        # Theta - elevation from zx-plane         [-90, 90]
+        elif orientation == 7:
+            phi = np.arctan2(x, z)
+            theta = np.arcsin(y, r)
+        
+        # Phi   - positive from x-axis            (-180, 180]
+        # Theta - elevation from zx-plane         [-90, 90]
+        elif orientation == 8:
+            phi = np.arctan2(-z, x)
+            theta = np.arcsin(y, r)
+        
+        # Phi   - positive from y-axis            (-180, 180]
+        # Theta - polar angle from x-axis         [0, 180]
+        elif orientation == 9:
+            phi = np.arctan2(z, y)
+            theta = np.arccos(x, r)
+        
+        # Phi   - positive from z-axis            (-180, 180]
+        # Theta - polar angle from x-plane        [0, 180]
+        elif orientation == 10:
+            phi = np.arctan2(-y, z)
+            theta = np.arccos(x, r)
+        
+        # Phi   - positive from y-axis            (-180, 180]
+        # Theta - elevation from yz-plane         [-90, 90]
+        elif orientation == 11:
+            phi = np.arctan2(z, y)
+            theta = np.arcsin(x, r)
+        
+        # Phi   - positive from z-axis            (-180, 180]
+        # Theta - elevation from yz-plane         [-90, 90]
+        elif orientation == 12:
+            phi = np.arctan2(-y, z)
+            theta = np.arcsin(x, r)
+
+        return phi, theta
+    
+    def plot_rd(self, **kwargs):
+
+        # Create the reduced distribution
+        f = self.reduce('phi-E')
+
+        # Compute velocity of energy bins
+        #   - Nonrelativistic: E = 0.5 * m * v**2
+        v = np.sqrt(2*eV2J*self.energy/self.mass) * 1e-3 # km/s
+
+        # Velocity bin size (non-relativistic)
+        dE = self.deltaE()
+        dv = 1/np.sqrt(self.mass) * 1/np.sqrt((2*eV2J*self.energy)) * eV2J*dE * 1e-3 # km/s
+        dphi = np.diff(self.phi).mean().item()
+        
+        # Create the left and right bin edges
+        #   - Phi: adjust from center to left bin-edge, add right bin edge
+        #   - v: use bin centers, add upper bin edge
+        phi_bins = np.append(self.phi - dphi/2, self.phi[-1] + dphi/2)
+        v_bins = np.append(v, v[-1]+dv[-1])
+
+        # Create the plot in polar coordinates
+        fig, axes = plt.subplots(nrows=1, ncols=1, squeeze=False,
+                                 subplot_kw={'projection': 'polar'})
+
+        ax = axes[0,0]
+        ax.pcolormesh(np.deg2rad(phi_bins), v_bins, f.transpose(),
+                      norm='log', **kwargs)
+        plt.show(block=False)
 
 
 def center_timestamps(fpi_data):
@@ -1412,7 +1995,7 @@ def maxwellian_distribution(dist, N=None, bulkv=None, T=None, **kwargs):
     kB   = constants.k
     mass = species_to_mass(dist.attrs['species'])
     
-    if density is None:
+    if N is None:
         N = density(dist)
     if bulkv is None:
         bulkv = velocity(dist, n=N)
@@ -1504,8 +2087,31 @@ def maxwellian_entropy(N, P):
     return Sb
 
 
-def maxwellian_lookup(dist, N_range, T_range, dims=(10, 10),
-                      fname=None):
+def lut_N(lim, err):
+    '''
+    Calculate the number of logarithmically-spaced points between two limits,
+    given than the relative spacing between points is constant.
+
+    Parameters
+    ----------
+    lim : (2,), float
+        Minimum and maximum of the data range
+    err : float
+        Relative spacing between points (∆x/x)
+    
+    Returns
+    -------
+    N : int
+        Number of points that span data range with constant `err`
+    '''
+    N = np.ceil((np.log10(lim[1]) - np.log10(lim[0]))
+                / np.log10(err + 1)
+                )
+    return int(N)
+
+
+def maxwellian_lookup(dist, n_range=[0.01, 150], t_range=[100, 10000],
+                      deltan_n=0.02, deltat_t=0.02, fname=None):
     '''
     Create a look-up table of Maxwellian distributions based on density and
     temperature.
@@ -1533,50 +2139,56 @@ def maxwellian_lookup(dist, N_range, T_range, dims=(10, 10),
         A Maxwellian distribution at each value of N and T. Returned only if
         *fname* is not specified.
     '''
-    N = np.linspace(N_range[0], N_range[1], dims[0])
-    T = np.linspace(T_range[0], T_range[1], dims[1])
-    V = xr.DataArray(np.zeros((1,3)),
-                     dims=['time', 'velocity_index'],
-                     coords={'velocity_index': ['Vx', 'Vy', 'Vz']})
+    N = lut_N(n_range, deltan_n)
+    M = lut_N(t_range, deltat_t)
+    print('Look-up Table will be NxM = {0}x{1}'.format(N, M))
+
+    dens = np.logspace(np.log10(n_range[0]), np.log10(n_range[1]), N)
+    temp = np.logspace(np.log10(t_range[0]), np.log10(t_range[1]), M)
+    vel = xr.DataArray(np.zeros((1,3)),
+                       dims=['time', 'velocity_index'],
+                       coords={'velocity_index': ['Vx', 'Vy', 'Vz']})
     
     # lookup_table = xr.zeros_like(dist.squeeze()).expand_dims({'N': N, 'T': T})
-    lookup_table = np.zeros((*dims, *np.squeeze(dist).shape))
-    n_lookup = np.zeros(dims)
-    v_lookup = np.zeros((*dims, 3))
-    t_lookup = np.zeros(dims)
-    s_lookup = np.zeros(dims)
-    sv_lookup = np.zeros(dims)
-    for idens, dens in enumerate(N):
-        for itemp, temp in enumerate(T):
-            f_max = maxwellian_distribution(dist, N=dens, bulkv=V, T=temp)
-            n = density(f_max)
-            v = velocity(f_max, N=n)
-            t = temperature(f_max, N=n, V=v)
-            s = entropy(f_max)
-            sv = vspace_entropy(f_max, N=n, s=s)
+    lookup_table = np.zeros((N, M, *np.squeeze(dist).shape))
+    n_lookup = np.zeros((N, M))
+    v_lookup = np.zeros((N, M, 3))
+    t_lookup = np.zeros((N, M))
+    # s_lookup = np.zeros(dims)
+    # sv_lookup = np.zeros(dims)
+    for jn, n in enumerate(dens):
+        for it, t in enumerate(temp):
+            f_M = maxwellian_distribution(dist, N=n, bulkv=vel, T=t)
+            n_M = density(f_M)
+            V_M = velocity(f_M, n=n_M)
+            t_M = scalar_temperature(f_M, n=n_M, V=V_M)
+            # s = entropy(f_max)
+            # sv = vspace_entropy(f_max, N=n, s=s)
             
-            lookup_table[idens, itemp, ...] = f_max.squeeze()
-            n_lookup[idens, itemp] = n
-            v_lookup[idens, itemp, :] = v
-            t_lookup[idens, itemp] = (t[0,0,0] + t[0,1,1] + t[0,2,2])/3.0
-            s_lookup[idens, itemp] = s
-            sv_lookup[idens, itemp] = sv
+            lookup_table[jn, it, ...] = f_M.squeeze()
+            n_lookup[jn, it] = n_M
+            v_lookup[jn, it, :] = V_M
+            t_lookup[jn, it] = t_M
+            # s_lookup[idens, itemp] = s
+            # sv_lookup[idens, itemp] = sv
     
     
     # Maxwellian density, velocity, and temperature are functions of input data
+    dens = xr.DataArray(dens, dims=('n_data',), attrs={'err': deltan_n})
+    temp = xr.DataArray(temp, dims=('t_data',), attrs={'err': deltat_t})
     n = xr.DataArray(n_lookup,
-                     dims = ('N_data', 't_data'),
-                     coords = {'N_data': N,
-                               't_data': T})
+                     dims = ('n_data', 't_data'),
+                     coords = {'n_data': dens,
+                               't_data': temp})
     V = xr.DataArray(v_lookup,
-                     dims = ('N_data', 't_data', 'v_index'),
-                     coords = {'N_data': N,
-                               't_data': T,
+                     dims = ('n_data', 't_data', 'v_index'),
+                     coords = {'n_data': dens,
+                               't_data': temp,
                                'v_index': ['Vx', 'Vy', 'Vz']})
     t = xr.DataArray(t_lookup,
-                     dims = ('N_data', 't_data'),
-                     coords = {'N_data': N,
-                               't_data': T})
+                     dims = ('n_data', 't_data'),
+                     coords = {'n_data': dens,
+                               't_data': temp})
     
     # delete duplicate data
     del n_lookup, v_lookup, t_lookup
@@ -1586,16 +2198,16 @@ def maxwellian_lookup(dist, N_range, T_range, dims=(10, 10),
     # temperature. This provides a mapping from measured data to discretized
     # Maxwellian values
     f = xr.DataArray(lookup_table,
-                     dims = ('N_data', 't_data', 'phi_index', 'theta', 'energy_index'),
-                     coords = {'N': n,
-                               'T': t,
+                     dims = ('n_data', 't_data', 'phi_index', 'theta', 'energy_index'),
+                     coords = {'n': n,
+                               't': t,
                                'phi': dist['phi'].squeeze(),
                                'theta': dist['theta'],
                                'energy': dist['energy'].squeeze(),
                                'U': dist['U'].squeeze(),
-                               'N_data': N,
-                               't_data': T})
-    
+                               'n_data': dens,
+                               't_data': temp})
+    '''
     s = xr.DataArray(s_lookup,
                      dims = ('N_data', 't_data'),
                      coords = {'N': n,
@@ -1609,19 +2221,22 @@ def maxwellian_lookup(dist, N_range, T_range, dims=(10, 10),
                                 'T': t,
                                 'N_data': N,
                                 't_data': T})
+    '''
     
     # Delete duplicate data
-    del lookup_table, s_lookup, sv_lookup
+    del lookup_table #, s_lookup, sv_lookup
     
     # Put everything into a dataset
-    ds = xr.Dataset({'N': n, 'V': V, 't': t, 
-                     's': s, 'sv': sv, 'f': f})
+    ds = (xr.Dataset({'n': n, 'V': V, 't': t, 'f': f})
+          .reset_coords(names=['n', 't'])
+          )
+    #                 's': s, 'sv': sv})
     
     if fname is None:
         return ds
     else:
         ds.to_netcdf(path=fname)
-        return
+        return fname
 
 
 def moments(dist, moment, **kwargs):
@@ -1908,6 +2523,10 @@ def precondition(dist, E0=100, E_low=10, E_high=None, scpot=None,
     f_out.attrs['Energy_e0'] = E0
     f_out.attrs['Lower_energy_integration_limit'] = E_low
     f_out.attrs['Upper_energy_integration_limit'] = None
+    f_out.attrs['lower_energy_extrapolation'] = low_energy_extrapolation
+    f_out.attrs['high_energy_extrapolation'] = high_energy_extrapolation
+    f_out.attrs['wrap_phi'] = wrap_phi
+    f_out.attrs['theta_extrapolation'] = theta_extrapolation
     return f_out
 
 
@@ -2459,6 +3078,26 @@ def relative_entropy(f, f_M, E0=100):
 
 
 def scalar_temperature(f=None, n=None, V=None, T=None):
+    '''
+    Calculate the scalar temperature
+
+    Parameters
+    ----------
+    f : (K,L,M,N) or (L,M,N), `xarray.DataArray`
+        Distribution function from which to calculate the temperature.
+        K is the optional time dimensionl
+    n : (K,) or (1,), `xarray.DataArray`
+        Density of `f`. If not present, it is calculated
+    V : (K,3) or (3,), `xarray.DataArray`
+        Density of `f`. If not present, it is calculated
+    T : (K,3,3) or (3,3), `xarray.DataArray`
+        Temperature tensor of `f`. If not present, it is calculated
+    
+    Returns
+    -------
+    t : (K,) or (1,), `xarray.DataArray`
+        Scalar temperature calculated from `f`
+    '''
     if T is None:
         T = temperature(f, n=n, V=V)
     t = (T[:,0,0] + T[:,1,1] + T[:,2,2]) / 3.0
