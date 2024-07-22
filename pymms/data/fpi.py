@@ -438,7 +438,7 @@ class Distribution_Function():
         '''
         
         # Create the distribution function
-        vdf = cls(f.data, f['phi'], f['theta'], f['energy'],
+        vdf = cls(f.data, f['phi'].data, f['theta'].data, f['energy'].data,
                   mass=species_to_mass(f.attrs['species']),
                   time=time, **kwargs)
 
@@ -460,28 +460,27 @@ class Distribution_Function():
 
             vdf._f = vdf.f
             vdf._phi = vdf.phi
+            vdf._theta = vdf.theta
             vdf._energy = vdf.energy
-            vdf._U = f['U']
+            vdf._U = f['U'].data
             vdf._is_preconditioned = True
         
-        vdf.precondition()
         return vdf
 
-    def maxwellian(self, N=None, V=None, T=None):
+    def maxwellian(self, n=None, V=None, t=None):
         
         # Need adjusted velocity-space bins
         self.precondition()
         
         # Calculate moments
-        if N is None:
-            N = self.density()
+        if n is None:
+            n = self.density()
         if V is None:
-            V = self.velocity(N=N)
-        if T is None:
-            T = self.temperature(N=N, V=V)
-            T = (T[0,0] + T[1,1] + T[2,2]) / 3.0
+            V = self.velocity(n=n)
+        if t is None:
+            t = self.scalar_temperature(n=n, V=V)
         
-        # Note that N, V, and T are calculated using the pre-conditioned
+        # Note that n, V, and t are calculated using the pre-conditioned
         # distribution function. Principally, this means that the energy
         # bins have been adjusted by the spacecraft potential. For the
         # Maxwellian and measured distributions to have the same velocity-
@@ -489,19 +488,23 @@ class Distribution_Function():
         # conditioned bins.
         
         # Compute velocity-space grid locations
-        vt = np.sqrt(2 * eV2J / self.mass * T)
+        #   - Preconditioning puts an np.inf in the energy bins, which
+        #     will trigger a NaN under certain conditions
+        vt = np.sqrt(2 * eV2J / self.mass * t)
         v = np.sqrt(2.0 * eV2J / self.mass * self._energy)  # m/s
         phi, theta, v = np.meshgrid(self._phi,
                                     self._theta,
                                     v, indexing='ij')
         
         # The |v - V|**2 terms
-        vxsqr = (-v * np.sin(theta) * np.cos(phi) - (1e3*V[0]))**2
-        vysqr = (-v * np.sin(theta) * np.sin(phi) - (1e3*V[1]))**2
-        vzsqr = (-v * np.cos(theta) - (1e3*V[2]))**2
+        #   - Ignore multiply by inf (see comment above)
+        with np.errstate(invalid='ignore'):
+            vxsqr = (-v * np.sin(theta) * np.cos(phi) - (1e3*V[0]))**2
+            vysqr = (-v * np.sin(theta) * np.sin(phi) - (1e3*V[1]))**2
+            vzsqr = (-v * np.cos(theta) - (1e3*V[2]))**2
         
         # Maxwellian distribution
-        coeff = 1e-6 * N / (np.sqrt(np.pi) * vt)**3 # s^3/cm^6
+        coeff = 1e-6 * n / (np.sqrt(np.pi) * vt)**3 # s^3/cm^6
         f = coeff * np.exp(-(vxsqr + vysqr + vzsqr) / vt**2) # s^3/cm^6
         
         # Replace endpoints at phi=0, theta=0, energy=inf
@@ -527,16 +530,16 @@ class Distribution_Function():
         
         return df
     
-    def maxwellian_entropy(self, N=None, P=None, **kwargs):
-        if N is None:
-            N = self.denisity()
+    def maxwellian_entropy(self, n=None, P=None, **kwargs):
+        if n is None:
+            n = self.denisity()
         if P is None:
-            P = self.pressure(N=N, **kwargs)
-            P = (P[0,0] + P[1,1], P[2,2]) / 3.0
+            P = self.pressure(n=n, **kwargs)
+            p = (P[0,0] + P[1,1], P[2,2]) / 3.0
     
-        sM = (-kB * 1e6 * N
-              * (np.log((1e19 * self.mass * N**(5.0/3.0)
-                        / 2 / np.pi / P)**(3/2)
+        sM = (-kB * 1e6 * n
+              * (np.log((1e19 * self.mass * n**(5.0/3.0)
+                        / 2 / np.pi / p)**(3/2)
                        )
                  - 3/2
                  )
@@ -572,21 +575,25 @@ class Distribution_Function():
             sign = -1
             energy = energy + (sign * J2eV * e * self.scpot)
             
-            mask = energy >= 0
-            energy = energy[mask]
-            f = f[:, :, mask]
+#            mask = energy >= 0
+#            energy = energy[mask]
+#            f = f[:, :, mask]
         
         # Lower integration limit
+        #   - Exclude data below the low-energy limit
+        #   - xr.DataArray.integrate does not avoid NaNs
+        #   - Fill with 0.0 because at front of array and trapezoidal integration
+        #     results in zero area.
         if self.E_low is not None:
             mask = energy >= self.E_low
-            energy = energy[mask]
-            f = f[:, :, mask]
+            energy[~mask] = 0.0
+            f[:, :, ~mask] = 0.0
         
         # Upper integration limit
         if self.E_high is not None:
             mask = energy <= self.E_high
-            energy = energy[mask]
-            f = f[:, :, mask]
+            energy[~mask] = 0.0
+            f[:, :, ~mask] = 0.0
         
         # Normalize energy
         U = energy / (energy + self.E0)
@@ -632,19 +639,19 @@ class Distribution_Function():
     def density(self):
         
         self.precondition()
-        
+
         coeff = 1e6 * np.sqrt(2 * (self.E0*eV2J)**3 / self.mass**3)
-        N = np.trapz(self._f, self._phi, axis=0)
-        N = np.trapz(np.sin(self._theta[:, np.newaxis]) * N,
+        n = np.trapz(self._f, self._phi, axis=0)
+        n = np.trapz(np.sin(self._theta[:, np.newaxis]) * n,
                      self._theta, axis=0)
 
         with np.errstate(invalid='ignore', divide='ignore'):
             y = np.sqrt(self._U) / (1 - self._U)**(5/2)
         y = np.where(np.isfinite(y), y, 0)
 
-        N = coeff * np.trapz(y * N, self._U, axis=0)
+        n = coeff * np.trapz(y * n, self._U, axis=0)
 
-        return N # 1/cm^3
+        return n # 1/cm^3
     
     def entropy(self):
         self.precondition()
@@ -673,10 +680,10 @@ class Distribution_Function():
     
     def epsilon(self, fM=None, N=None):
         mass = species_to_mass(dist.attrs['species'])
-        if N is None:
-            N = density(dist, **kwargs)
+        if n is None:
+            n = self.density()
         if fM is None:
-            fM = self.maxwellian(N=N)
+            fM = self.maxwellian(n=n)
         
         self.precondition()
         fM.precondition()
@@ -690,7 +697,7 @@ class Distribution_Function():
             y = np.sqrt(self._U) / (1 - self._U)**(5/2) * df
         y[-1] = 0
         
-        coeff = 1e3 * 2**(1/4) * eV2J**(3/4) * (E0 / mass)**(3/2) / N
+        coeff = 1e3 * 2**(1/4) * eV2J**(3/4) * (self.E0 / mass)**(3/2) / n
         epsilon = coeff * np.trapz(y * df, self._U, axis=0)
     
         return epsilon
@@ -1016,15 +1023,14 @@ class Distribution_Function():
 
         return f
 
-    def information_loss(self, fM=None, N=None, T=None):
-        if N is None:
-            N = self.density()
-        if T is None:
-            T = self.temperature(N=N)
-            T = (T[0,0] + T[1,1] + T[2,2]) / 3.0
+    def information_loss(self, fM=None, n=None, t=None):
+        if n is None:
+            n = self.density()
+        if t is None:
+            t = self.scalar_temperature(n=n)
         if fM is None:
-            V = self.velocity(N=N)
-            fM = self.maxwellian(N=N, V=V, T=T)
+            V = self.velocity(n=n)
+            fM = self.maxwellian(n=n, V=V, t=t)
         
         self.precondition()
         fM.precondition
@@ -1052,17 +1058,17 @@ class Distribution_Function():
         # Numerator
         num1 = np.trapz(y * lnydy * np.sin(_theta) * (fM._f - self._f), self._phi, axis=0)
         num1 = np.trapz(num1, self._theta, axis=0)
-        num1 = 1/(1e6*N) * coeff * 1e12 * np.trapz(num1, self._U, axis=0)
+        num1 = 1/(1e6*n) * coeff * 1e12 * np.trapz(num1, self._U, axis=0)
     
         num2 = np.trapz(y * np.sin(_theta) * (fM._f - self._f), self._phi, axis=0)
         num2 = np.trapz(num2, self._theta, axis=0)
-        num2 = 1/(1e6*N) * coeff * 1e12 * self._trapz(num2, self._U)
+        num2 = 1/(1e6*n) * coeff * 1e12 * self._trapz(num2, self._U)
     
         num = num1 + num2
     
         # Denominator
         denom1 = 1
-        denom2 = np.log(2**(2/3) * np.pi * kB * eV2K * T / (eV2J * self.E0))
+        denom2 = np.log(2**(2/3) * np.pi * kB * eV2K * t / (eV2J * self.E0))
     
         denom3 = np.trapz(y * lnydy * np.sin(_theta) * fM._f, self._phi, axis=0)
         denom3 = np.trapz(denom3, self._theta, axis=0)
@@ -1076,18 +1082,18 @@ class Distribution_Function():
     
         return num, denom
     
-    def pressure(self, N=None, T=None):
+    def pressure(self, n=None, T=None):
         self.precondition()
-        if N is None:
-            N = self.density()
+        if n is None:
+            n = self.density()
         if T is None:
-            T = self.temperature(N=N)
+            T = self.temperature(n=n)
     
-        P = 1e15 * N * kB * eV2K * T
+        P = 1e15 * n * kB * eV2K * T
     
         return P
 
-    def scalar_temperature(self, N=None, V=None, T=None):
+    def scalar_temperature(self, n=None, V=None, T=None):
         '''
         Calculate the scalar temperature
 
@@ -1106,15 +1112,15 @@ class Distribution_Function():
             Scalar temperature calculated from `f`
         '''
         if T is None:
-            T = self.temperature(N=N, V=V)
+            T = self.temperature(n=n, V=V)
         return (T[0,0] + T[1,1] + T[2,2]) / 3.0
     
-    def temperature(self, N=None, V=None):
+    def temperature(self, n=None, V=None):
         self.precondition()
-        if N is None:
-            N = self.density()
+        if n is None:
+            n = self.density()
         if V is None:
-            V = self.velocity(N=N)
+            V = self.velocity(n=n)
         
         # Integrate over phi
         phi = self._phi[:, np.newaxis, np.newaxis]
@@ -1142,7 +1148,7 @@ class Distribution_Function():
             y = self._U**(3/2) / (1 - self._U)**(7/2)
         y = np.where(np.isfinite(y), y, 0)
     
-        coeff = 1e6 * (2/self.mass)**(3/2) / (N * kB / K2eV) * (self.E0*eV2J)**(5/2)
+        coeff = 1e6 * (2/self.mass)**(3/2) / (n * kB / K2eV) * (self.E0*eV2J)**(5/2)
         Vij = np.array([[V[0]*V[0], V[0]*V[1], V[0]*V[2]],
                         [V[1]*V[0], V[1]*V[1], V[1]*V[2]],
                         [V[2]*V[0], V[2]*V[1], V[2]*V[2]]])
@@ -1154,10 +1160,10 @@ class Distribution_Function():
         return T
     
     
-    def velocity(self, N=None):
+    def velocity(self, n=None):
         self.precondition()
-        if N is None:
-            N = self.density()
+        if n is None:
+            n = self.density()
         
         # Integrate over phi
         vx = np.trapz(np.cos(self._phi)[:, np.newaxis, np.newaxis] * self._f,
@@ -1180,14 +1186,14 @@ class Distribution_Function():
             y = self._U / (1 - self._U)**3
         y = np.where(np.isfinite(y), y, 0)
         
-        coeff = -1e3 * 2 * (eV2J * self.E0 / self.mass)**2 / N
+        coeff = -1e3 * 2 * (eV2J * self.E0 / self.mass)**2 / n
         V = coeff * np.trapz(y[:, np.newaxis] * V, self._U, axis=0)
         return V
     
-    def vspace_entropy(self, N=None, s=None):
+    def vspace_entropy(self, n=None, s=None):
         self.precondition()
-        if N is None:
-            N = self.density()
+        if n is None:
+            n = self.density()
         if s is None:
             s = self.entropy()
         
@@ -1213,7 +1219,7 @@ class Distribution_Function():
     
         # Terms in that make up the velocity space entropy density
         sv1 = s # J/K/m^3 ln(s^3/m^6) -- Already multiplied by -kB
-        sv2 = kB * (1e6*N) * np.log(1e6*N/coeff) # 1/m^3 * ln(1/m^3)
+        sv2 = kB * (1e6*n) * np.log(1e6*n/coeff) # 1/m^3 * ln(1/m^3)
         
         sv3 = np.trapz(y * lnydy * np.sin(self._theta)[:,np.newaxis] * self._f, self._phi, axis=0)
         sv3 = np.trapz(sv3, self._theta, axis=0)
@@ -2523,7 +2529,7 @@ def precondition(dist, E0=100, E_low=10, E_high=None, scpot=None,
     f_out.attrs['Energy_e0'] = E0
     f_out.attrs['Lower_energy_integration_limit'] = E_low
     f_out.attrs['Upper_energy_integration_limit'] = None
-    f_out.attrs['lower_energy_extrapolation'] = low_energy_extrapolation
+    f_out.attrs['low_energy_extrapolation'] = low_energy_extrapolation
     f_out.attrs['high_energy_extrapolation'] = high_energy_extrapolation
     f_out.attrs['wrap_phi'] = wrap_phi
     f_out.attrs['theta_extrapolation'] = theta_extrapolation

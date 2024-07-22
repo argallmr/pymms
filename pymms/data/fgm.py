@@ -171,7 +171,7 @@ def load_data(sc='mms1', instr='fgm', mode='srvy', level='l2',
     start_date, end_date : `datetime.datetime`
         Start and end of the data interval.
     product : str
-        Data product to be loaded ('b', 'b-field', 'ephemeris', 'state')
+        Data product to be loaded ('b', 'b-field', 'r', 'ephemeris', 'state')
     coords : str, list
         Data coordinate system ('gse', 'gsm', 'dmpa', 'bcs')
     rename_vars : bool
