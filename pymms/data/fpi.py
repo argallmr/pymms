@@ -1072,11 +1072,11 @@ class Distribution_Function():
     
         denom3 = np.trapz(y * lnydy * np.sin(_theta) * fM._f, self._phi, axis=0)
         denom3 = np.trapz(denom3, self._theta, axis=0)
-        denom3 = 1/(1e6*N) * coeff * 1e12 * np.trapz(denom3, self._U, axis=0)
+        denom3 = 1/(1e6*n) * coeff * 1e12 * np.trapz(denom3, self._U, axis=0)
     
         denom4 = np.trapz(y * np.sin(_theta) * fM._f, self._phi, axis=0)
         denom4 = np.trapz(denom4, self._theta, axis=0)
-        denom4 = 1/(1e6*N) * coeff * 1e12 * self._trapz(denom4, self._U)
+        denom4 = 1/(1e6*n) * coeff * 1e12 * self._trapz(denom4, self._U)
     
         denom = denom1 + denom2 - denom3 - denom4
     
