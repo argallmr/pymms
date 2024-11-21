@@ -623,7 +623,7 @@ class MrMMS_SDC_API:
         # Return the response for the requested URL
         return r
 
-    def local_file_names(self, mirror=False):
+    def local_file_names(self):
         '''
         Search for MMS files on the local system. Files must be
         located in an MMS-like directory structure.
@@ -642,7 +642,7 @@ class MrMMS_SDC_API:
         '''
 
         # Search the mirror or local directory
-        if mirror:
+        if self._mirror_root is not None:
             data_root = self._mirror_root
         else:
             data_root = self._data_root
@@ -902,8 +902,19 @@ class MrMMS_SDC_API:
         #   - Unpack with *: https://docs.python.org/2/tutorial/controlflow.html#unpacking-argument-lists
         local_names = list()
         for file in remote_names:
-            local_names.append(os.path.join(self._data_root,
+            mirror_name = ''
+            
+            # Search in the mirror directory first- it should contain all files
+            if self._mirror_root is not None:
+                mirror_name = (os.path.join(self._mirror_root,
                                *file.split('/')[2:]))
+            
+            # Either the mirror file exists or it needs to be downloaded to data_root
+            if os.path.exists(mirror_name):
+                local_names.append(mirror_name)
+            else:
+                local_names.append(os.path.join(self._data_root,
+                                   *file.split('/')[2:]))
 
         if (len(remote_names) == 1) & (type(remote_names) == 'str'):
             local_names = local_names[0]
