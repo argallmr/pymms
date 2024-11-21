@@ -381,7 +381,11 @@ def cdf_load_var(cdf, varname):
         return
 
     # Read the variable data
-    data = cdf.varget(variable=varname)
+    try:
+        data = cdf.varget(variable=varname)
+    # If no records are found
+    except ValueError:
+        data = np.full(cdf.varinq(varname).Dim_Sizes, cdf.varinq(varname).Pad)
     
     # Convert epochs to datetimes
     if varinq.Data_Type_Description in time_types:
@@ -521,13 +525,14 @@ def cdf_var_dims(cdf, varname, ndims):
             
             cdf_load_var(cdf, dim_name)
             coord_data = cdf_vars_read[dim_name]
+
             if len(coord_data.shape) == 1:
                 dim_name = coord_name
-            elif len(coord_data.shape) == 2:
+            elif len(coord_data.shape) <= 3:
                 dim_name = coord_data.dims[-1]
             else:
-                ValueError('Coordinate has unexpected number of '
-                           'dimensions (>2).')
+                raise ValueError('Coordinate has unexpected number of '
+                                 'dimensions (>3).')
             
             coords[coord_name] = coord_data
             dims.append(dim_name)

@@ -532,11 +532,11 @@ class Distribution_Function():
     
     def maxwellian_entropy(self, n=None, P=None, **kwargs):
         if n is None:
-            n = self.denisity()
+            n = self.density()
         if P is None:
             P = self.pressure(n=n, **kwargs)
-            p = (P[0,0] + P[1,1], P[2,2]) / 3.0
-    
+            p = (P[0,0] + P[1,1] + P[2,2]) / 3.0
+
         sM = (-kB * 1e6 * n
               * (np.log((1e19 * self.mass * n**(5.0/3.0)
                         / 2 / np.pi / p)**(3/2)
@@ -544,7 +544,7 @@ class Distribution_Function():
                  - 3/2
                  )
               )
-    
+
         return sM
     
     def is_preconditioned(self):
@@ -747,20 +747,22 @@ class Distribution_Function():
         rtypes = ('phi', 'theta', 'E', 'theta-phi', 'phi-E', 'theta-E')
 
         if rtype == 'phi':
-            f = self._reduce_phi(**kwargs)
+            func = self._reduce_phi
         elif rtype == 'theta':
-            f = self._reduce_theta(**kwargs)
+            func = self._reduce_theta
         elif rtype == 'E':
-            f = self._reduce_E(**kwargs)
+            func = self._reduce_E
         elif rtype == 'phi-theta':
-            f = self._reduce_theta_phi(**kwargs)
+            func = self._reduce_theta_phi
         elif rtype == 'phi-E':
-            f = self._reduce_phi_E(**kwargs)
+            func = self._reduce_phi_E
         elif rtype == 'theta-E':
-            f = self._reduce_theta_E(**kwargs)
+            func = self._reduce_theta_E
         else:
             raise ValueError('rtype must be {0}, not {1}'.format(rtypes, rtype))
 
+        self.precondition()
+        f = func(**kwargs)
         return f
     
     def _reduce_E(self, dphi=None, dtheta=None):
@@ -777,9 +779,9 @@ class Distribution_Function():
         '''
         # Assume theta and phi are equally sized/spaced bins
         if dphi is None:
-            dphi = np.diff(self.phi[:,0]).mean()
+            dphi = np.diff(self._phi).mean()
         if dtheta is None:
-            dtheta = np.diff(self.theta[0,:]).mean()
+            dtheta = np.diff(self._theta).mean()
 
         # Weight for averaging reduced distribution
         #   - Volume of each cell = dv * v*dtheta * v*sin(theta)*dphi)
@@ -788,16 +790,16 @@ class Distribution_Function():
         #   - w = v**2 * sin(theta) * dv * dtheta * dphi
         #   - v and dv are constant in sums over phi and theta
         #   => w = sin(theta) * dtheta * dphi
-        w = np.sin(np.deg2rad(self.theta)) * dphi * dtheta
+        w = np.sin(self._theta) * dphi * dtheta
         w = w[..., np.newaxis]
 
         # Average over phi and theta
         #   - f(phi, theta, v)
-        f = np.sum(np.sum(w * self.f, axis=0), axis=0) / np.sum(w)
+        f = np.sum(np.sum(w * self._f, axis=0), axis=0) / np.sum(w)
         
         f = xr.DataArray(f,
                          dims=('energy',),
-                         coords={'energy': self.energy})
+                         coords={'energy': self._energy})
 
         return f
 
@@ -814,9 +816,9 @@ class Distribution_Function():
             Reduced 1D distribution function as a function of energy
         '''
         if dphi is None:
-            dphi = np.diff(self.phi[:,0]).mean()
+            dphi = np.diff(self.phi[0,:]).mean()
         if dtheta is None:
-            dphi = np.diff(self.theta[0,:]).mean()
+            dtheta = np.diff(self.theta).mean()
         
         v_sqr = 2*eV2J*self.energy/self.mass * 1e4 # (cm/s)**2
         dE = self.deltaE()
@@ -1082,16 +1084,21 @@ class Distribution_Function():
     
         return num, denom
     
-    def pressure(self, n=None, T=None):
+    def pressure(self, n=None, T=None, **kwargs):
         self.precondition()
         if n is None:
             n = self.density()
         if T is None:
-            T = self.temperature(n=n)
+            T = self.temperature(n=n, **kwargs)
     
         P = 1e15 * n * kB * eV2K * T
     
         return P
+
+    def scalar_pressure(self, **kwargs):
+
+        P = self.pressure(**kwargs)
+        return (P[0,0] + P[1,1] + P[2,2]) / 3.0
 
     def scalar_temperature(self, n=None, V=None, T=None):
         '''
