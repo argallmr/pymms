@@ -354,6 +354,7 @@ class MrMMS_SDC_API:
                                       params={'file': info['file_name']},
                                       stream=True)
                 with tqdm(total=info['file_size'],
+                               desc=info['file_name'],
                                unit='B',
                                unit_scale=True,
                                unit_divisor=1024
