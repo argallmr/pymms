@@ -471,9 +471,14 @@ def combine_segments(data, dt_contig=0):
         returned by `pymms.burst_data_segment()`, this is 10.
     '''
     # Any time delta > dt_contig sec indicates the end of a contiguous interval
+    t_deltas = [(seg1.tstart - seg0.tstop).astype('timedelta64[s]').astype(float)
+                for seg1, seg0 in zip(data[1:], data[:-1])
+                ]
+    '''
     t_deltas = [(seg1.tstart - seg0.tstop).total_seconds()
                 for seg1, seg0 in zip(data[1:], data[:-1])
                 ]
+    '''
     
     # Time deltas has one fewer element than data at this stage. Append
     # infinity to the time deltas to indicate that the last element in data

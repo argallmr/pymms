@@ -1035,7 +1035,7 @@ class Distribution_Function():
             fM = self.maxwellian(n=n, V=V, t=t)
         
         self.precondition()
-        fM.precondition
+        fM.precondition()
         
         # Assume that the azimuth and polar angle bins are equal size
         dtheta = np.diff(self._theta).mean()
@@ -1094,6 +1094,60 @@ class Distribution_Function():
         P = 1e15 * n * kB * eV2K * T
     
         return P
+    
+    def relative_entropy(self, f_M):
+        '''
+        Compute the relative velocity-space entropy
+
+        Parameters
+        f : (N,T,P,E), `xarray.DataArray`
+            The measured distribution with dimensions/coordinates of time (N),
+            polar/theta angle (T), azimuth/theta angle (P), and energy (E)
+        f_M : (N,T,P,E), `xarray.DataArray`
+            An equivalent Maxwellian distribution with dimensions/coordinates of time (N),
+            polar/theta angle (T), azimuth/theta angle (P), and energy (E). It should
+            have the same density and temperature as the measured distribution
+        species : str
+            Particle species represented by the distribution: ('e', 'i')
+        E0 : float
+            Energy (keV) used to normalize the energy bins of the distribution
+        
+        Returns
+        -------
+        sV_rel : (N,), `xarray.DataArray`
+            Relative velocity space entropy [J/K/m^3]
+        '''
+        self.precondition()
+        
+        # Assume that the azimuth and polar angle bins are equal size
+        dtheta = np.diff(self._theta).mean()
+        dphi = np.diff(self._phi).mean()
+
+        # Integrate over phi and theta
+        #   - Measurement bins with zero counts result in a
+        #     phase space density of 0
+        #   - Photo-electron correction can result in negative
+        #     phase space density.
+        #   - Log of value <= 0 is nan. Avoid be replacing
+        #     with 1 so that log(1) = 0
+        with np.errstate(invalid='ignore', divide='ignore'):
+            sv_rel = self._f / f_M._f
+        sv_rel = np.where(sv_rel > 0, sv_rel, 1)
+        # 1e12 converts s^3/cm^6 to s^3/m^6
+        sv_rel = np.trapz(1e12 * self._f * np.log(sv_rel), self._phi, axis=0)
+
+        # Integrate over theta
+        sv_rel = np.trapz(np.sin(self._theta[:,np.newaxis]) * sv_rel, self._theta, axis=0)
+
+        # Integrate over Energy
+        with np.errstate(invalid='ignore', divide='ignore'):
+            y = np.sqrt(self._U) / (1 - self._U)**(5/2)
+        y = np.where(np.isfinite(y), y, 0)
+
+        coeff = -kB * np.sqrt(2) * (eV2J * self.E0 / self.mass)**(3/2)
+        sv_rel = coeff * np.trapz(y * sv_rel, self._U, axis=0)
+
+        return sv_rel # J/K/m^3
 
     def scalar_pressure(self, **kwargs):
 
@@ -1255,6 +1309,13 @@ class Distribution_Function():
         '''
         Convert look directions from spherical to polar coordinates.
 
+        Parameters
+        ----------
+        phi : `numpy.ndarray`
+            Azimuth angles in radians of the look directions
+        theta : `numpy.ndarray`
+            Polar angles in radians of the look directions
+
         Returns
         -------
         x, y, z : `numpy.ndarray`
@@ -1386,6 +1447,9 @@ class Distribution_Function():
             theta = np.arcsin(x, r)
 
         return phi, theta
+    
+    def rotate(self):
+        pass
     
     def plot_rd(self, **kwargs):
 
@@ -2605,7 +2669,8 @@ def precond_params(sc, mode, level, optdesc,
     scpot = edp.load_scpot(sc=sc, mode=edp_mode,
                            start_date=start_date, end_date=end_date)
     if time is not None:
-        scpot = scpot['Vsc'].interp_like(time, method='nearest')
+        scpot = scpot['Vsc'].interp_like(time, method='nearest',
+                                         kwargs=dict(fill_value='extrapolate'))
     
     # Extract the data so that it is acceptable by precondition()
     precond_kwargs = {'E0': float(regex.match(E0).group(1)),
@@ -2771,7 +2836,7 @@ def entropy(f):
     y = np.where(np.isfinite(y), y, 0)
     
     coeff = -kB * np.sqrt(2) * (eV2J * E0 / mass)**(3/2)
-    S = coeff * np.trapz(y * S, f['U'], axis=1)
+    S = coeff * np.trapz(y * S, f['U'], axis=1) # J/K/m^3
 
     # Convert to a DataArray
     S = xr.DataArray(S,

@@ -367,7 +367,7 @@ def cdf_load_var(cdf, varname):
         Variables read from file
     '''
     global cdf_vars_read
-    
+
     time_types = ('CDF_EPOCH', 'CDF_EPOCH16', 'CDF_TIME_TT2000')
     tepoch = epochs.CDFepoch()
     varinq = cdf.varinq(varname)

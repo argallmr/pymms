@@ -2719,8 +2719,15 @@ def read_eva_fom_structure(sav_filename):
     # Add to output structure
     d['taistarttime'] = taistarttime
     d['taiendtime'] = taiendtime
-    d['start_time'] = [t.strftime('%Y-%m-%d %H:%M:%S') for t in tstart]
-    d['stop_time'] = [t.strftime('%Y-%m-%d %H:%M:%S') for t in tstop]
+
+    # Recent version use np.datetime64 instead of dt.datetime64
+    #   - This converts either to a list of datetimes
+    dt_start = np.array(tstart).astype(dt.datetime).tolist()
+    dt_stop = np.array(tstop).astype(dt.datetime).tolist()
+
+    d['start_time'] = [t.strftime('%Y-%m-%d %H:%M:%S') for t in dt_start]
+    d['stop_time'] = [t.strftime('%Y-%m-%d %H:%M:%S') for t in dt_stop]
+
     d['tstart'] = tstart
     d['tstop'] = tstop
     d['createtime'] = [file_start_time(sav_filename)] * d['nsegs']

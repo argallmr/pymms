@@ -46,7 +46,7 @@ setup(
                   "pymms.gls"],
       package_data = {'pymms': ['config_template.ini']},
       include_package_data = True,
-      install_requires = ["numpy>=1.24",
+      install_requires = ["numpy >=1.24, <=1.26.4",
                           "requests>=2.22.0",
                           "scipy>=1.4.1", 
                           "tqdm>=4.36.1",
@@ -54,7 +54,7 @@ setup(
                           "matplotlib>=3.4"
                           ],
       extras_require = {'data': ["cdflib >= 0.3.18",
-                                 "xarray >= 0.16.0"],
+                                 "xarray >= 0.16.0, <==2023.6.0"],
                         'gls': ["tensorflow >=1.13.1, <=1.15",
                                 "keras >=2.2.4, <=2.3.1"],
                         'sql': [""]},
