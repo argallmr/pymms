@@ -416,14 +416,21 @@ def cdf_load_var(cdf, varname):
     
     # different number of dimensions on data and dims: 2 vs 1
     except ValueError as E:
+        # If the data is a scalar, it will have 0 dimensions. We need to make it
+        # an array in order to pair it with dimensions
+        #
         # There can be varinq['Num_Dims'] > 1 but varinq['DimVary'] = -1
         # indicating that there is a shallow dimension. Do a simple check first.
-        if len(dims) != data.ndim:
-            da = xr.DataArray(data.squeeze(),
-                              dims=dims,
-                              coords=coords)
+        if data.ndim == 0:
+            data = [data,]
+        elif len(dims) != data.ndim:
+            data = data.squeeze()
         else:
             raise E from None
+        
+        da = xr.DataArray(data,
+                          dims=dims,
+                          coords=coords)
 
     # Indicate that the variable has been read.
     cdf_vars_read[varname] = da

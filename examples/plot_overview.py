@@ -1,10 +1,14 @@
 from pymms.data import edp, fgm, fpi
+from pymms.sdc import selections as sel
 import numpy as np
 from matplotlib import pyplot as plt, dates as mdates
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
 def overview(sc, mode, start_date, end_date, **kwargs):
     
+    if mode != 'brst':
+        selections = sel.selections('sitl', t0, t1, combine=True, sort=True)
+
     # Read the data
     b = fgm.load_data(sc=sc, mode=mode,
                       start_date=start_date, end_date=end_date)
@@ -45,6 +49,15 @@ def overview(sc, mode, start_date, end_date, **kwargs):
     # Color the legend text the same color as the lines
     for line, text in zip(ax.get_lines(), leg.get_texts()):
         text.set_color(line.get_color())
+    
+    # Create a line for each of the burst segments
+    if mode != 'brst':
+        ylim = ax.get_ylim()
+        for segment in selections:
+            tstart = mdates.date2num(segment.tstart)
+            tstop = mdates.date2num(segment.tstop)
+            ax.plot([tstart, tstop], [ylim[1],]*2 ,
+                    linewidth=3, color='orange')
     
     # Ion energy spectrogram
     nt = dis_moms['omnispectr'].shape[0]

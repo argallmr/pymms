@@ -4,10 +4,13 @@ import datetime as dt
 import numpy as np
 import xarray as xr
 from scipy import constants
+from scipy.stats import binned_statistic_2d
+from scipy.spatial.transform import Rotation as R
 import warnings
 
 # Distribution function
 from matplotlib import pyplot as plt
+from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
 # Maxwellian look-up table
 import pandas as pd
@@ -381,6 +384,21 @@ class Distribution_Function():
         self.high_energy_extrapolation = high_energy_extrapolation
         self.low_energy_extrapolation = low_energy_extrapolation
     
+    def __str__(self):
+        prt = 'time:                      {0}'.format(self.time)
+        prt = prt + '\n' + 'mass:                      {0}'.format(self.mass)
+        prt = prt + '\n' + 'E0:                        {0}'.format(self.E0)
+        prt = prt + '\n' + 'Wrap Phi:                  {0}'.format(self.wrap_phi)
+        prt = prt + '\n' + 'Theta Extrapolation:       {0}'.format(self.theta_extrapolation)
+        prt = prt + '\n' + 'High Energy Extrapolation: {0}'.format(self.high_energy_extrapolation)
+        prt = prt + '\n' + 'Low Energy Extrapolation:  {0}'.format(self.low_energy_extrapolation)
+        prt = prt + '\n' + 'Preconditioned:            {0}'.format(self.is_preconditioned())
+        prt = prt + '\n' + 'E0:                        {0}'.format(self.E0)
+        prt = prt + '\n' + 'E High:                    {0}'.format(self.E_high)
+        prt = prt + '\n' + 'E Low:                     {0}'.format(self.E_low)
+        prt = prt + '\n' + 'Spacecraft Potential:      {0}'.format(self.scpot)
+        return prt
+    
     def __setattr__(self, name, value):
         # Ensure that phi, theta, and energy have the correct dimensions
         if (name in ('phi', 'theta', 'energy')) and (self.f is None):
@@ -435,12 +453,11 @@ class Distribution_Function():
         -------
         vdf : `Distribution_Function`
             An instance of the class
-        '''
-        
+        '''        
         # Create the distribution function
         vdf = cls(f.data, f['phi'].data, f['theta'].data, f['energy'].data,
                   mass=species_to_mass(f.attrs['species']),
-                  time=time, **kwargs)
+                  time=f['time'].data, **kwargs)
 
         # The distribution function has already been preconditioned
         #   - Normally, the original and preconditioned data are stored
@@ -816,7 +833,7 @@ class Distribution_Function():
             Reduced 1D distribution function as a function of energy
         '''
         if dphi is None:
-            dphi = np.diff(self.phi[0,:]).mean()
+            dphi = np.diff(self.phi).mean()
         if dtheta is None:
             dtheta = np.diff(self.theta).mean()
         
@@ -899,7 +916,7 @@ class Distribution_Function():
         '''
         # Assume theta are equally sized/spaced bins
         if dtheta is None:
-            dtheta = np.diff(self.theta[0,:]).mean()
+            dtheta = np.diff(self.theta).mean()
 
         v = np.sqrt(2*eV2J*self.energy/self.mass) * 1e2 # cm/s
         dE = self.deltaE()
@@ -914,15 +931,14 @@ class Distribution_Function():
         #   - v, dv, dphi are constant in sums over theta
         #   => w = sin(theta) * dtheta
         w = np.sin(np.deg2rad(self.theta)) * dtheta
-        w = w[:, :, np.newaxis]
+        w = w[np.newaxis, :, np.newaxis]
 
         # Average over v & phi for the 1D reduced distribution
         #   - f(phi, theta, v)
         f = np.sum(w * self.f, axis=1) / np.sum(w)
-
         f = xr.DataArray(f,
                          dims=['phi', 'energy'],
-                         coords={'phi': xr.DataArray((('phi', 'theta'), self.phi)),
+                         coords={'phi': self.phi,
                                  'energy': self.energy})
 
         return f
@@ -941,7 +957,7 @@ class Distribution_Function():
         '''
         # Assume theta and phi are equally sized/spaced bins
         if dphi is None:
-            dphi = np.diff(self.phi[:,0]).mean()
+            dphi = np.diff(self.phi).mean()
         
         v_sqr = 2*eV2J*self.energy/self.mass * 1e4 # (cm/s)**2
         dE = self.deltaE()
@@ -989,7 +1005,7 @@ class Distribution_Function():
         '''
         # Assume theta and phi are equally sized/spaced bins
         if dphi is None:
-            dphi = np.diff(self.phi[:,0]).mean()
+            dphi = np.diff(self.phi).mean()
         
         v_sqr = 2*eV2J*self.energy/self.mass * 1e4 # (cm/s)**2
         dE = self.deltaE()
@@ -1126,13 +1142,15 @@ class Distribution_Function():
         # Integrate over phi and theta
         #   - Measurement bins with zero counts result in a
         #     phase space density of 0
+        #   - Maxwellian distribution can have phase space density of 0
+        #     resulting in a 1/0 = inf
         #   - Photo-electron correction can result in negative
         #     phase space density.
         #   - Log of value <= 0 is nan. Avoid be replacing
         #     with 1 so that log(1) = 0
         with np.errstate(invalid='ignore', divide='ignore'):
             sv_rel = self._f / f_M._f
-        sv_rel = np.where(sv_rel > 0, sv_rel, 1)
+        sv_rel = np.where((sv_rel > 0) & np.isfinite(sv_rel), sv_rel, 1)
         # 1e12 converts s^3/cm^6 to s^3/m^6
         sv_rel = np.trapz(1e12 * self._f * np.log(sv_rel), self._phi, axis=0)
 
@@ -1332,7 +1350,7 @@ class Distribution_Function():
         return x, y, z
     
     @staticmethod
-    def cart2sphr(x, y, z, orientation=1):
+    def cart2sphr(x, y, z, orientation=1, degrees=False):
         '''
         Convert cartesian coordinates to spherical coordinates.
 
@@ -1369,7 +1387,7 @@ class Distribution_Function():
         
         Returns
         -------
-        theta, phi : `numpy.ndarray`
+        phi, theta : `numpy.ndarray`
             Spherical coordinate unit vectors (|r| = 1)
         '''
         r = np.sqrt(x**2 + y**2 + z**2)
@@ -1445,13 +1463,195 @@ class Distribution_Function():
         elif orientation == 12:
             phi = np.arctan2(-y, z)
             theta = np.arcsin(x, r)
+        
+        else:
+            raise ValueError('Orientation must be an integer between 1 and 12, '
+                             'not {0}'.format(orientation))
+
+        if degrees:
+            phi = np.rad2deg(phi)
+            theta = np.rad2deg(theta)
 
         return phi, theta
     
-    def rotate(self):
-        pass
+    @staticmethod
+    def transform_matrix(par, perp, cs='vxb'):
+        '''
+        Create a transformation matrix that can rotate the distribution function.
+
+        Parameters
+        ----------
+        par : (3,), float, `numpy.ndarray`
+            A vector that defines the parallel direction
+        perp : (3,), float, `numpy.ndarray`
+            A vector that defines the perpendiclar direction
+        cs : str
+            Coordinate system defining the orientation of the
+            `par` and `perp` directions
+                | cs  | par | perp | perp1    | perp2  |
+                -----------------------------------------------
+                | vxb | B   | V    | -(vxb)xb | -(vxb) |
+        
+        Returns
+        -------
+        T : `scipy.spatial.transform.Rotation`
+            The rotation instance with x'=perp1, y'=perp2, z=par
+        '''
+
+        # Normalize parallel direction
+        par_mag = np.linalg.norm(par, ord=2)
+        par_hat = par / par_mag
+
+        # Normalize perpendicular direction
+        perp_mag = np.linalg.norm(perp, ord=2)
+        perp_hat = perp / perp_mag
+
+        # Create orthonormal vectors perpendicular to the parallel direction using
+        # the perp vector as a guide
+        if cs == 'vxb':
+            perp2 = -np.cross(perp_hat, par_hat) # -v x b
+            perp2 /= np.linalg.norm(perp2, ord=2)
+            perp1 = np.cross(perp2, par) # (v x b) x b
+            perp1 /= np.linalg.norm(perp1, ord=2)
+        else:
+            raise ValueError('Coordinate system must be (vxb, ), not {0}'
+                             .format(cs))
+
+        # Transformation matrix
+        #   - Par is stacked to the last column but needs to be the last row
+        T = R.from_matrix(np.stack([perp1, perp2, par], axis=1).T)
+
+        return T
     
-    def plot_rd(self, **kwargs):
+    def rebin(self, phi_prime, theta_prime):
+
+        # Determine the bin sizes
+        dims = self.f.shape
+        v = 1e-3 * np.sqrt(2*self.energy*eV2J / self.mass)
+        dE = self.deltaE()
+        dv =  1e-3 * np.sqrt(eV2J/2) * dE / np.sqrt(2 * self.energy * self.mass)
+        dphi = np.deg2rad(np.diff(self.phi).mean())
+        dtheta = np.deg2rad(np.diff(self.theta).mean())
+        
+        # Create the cell weights based on their skymap bin size
+        phi, theta = np.meshgrid(self.phi, self.theta, indexing='ij')
+        dphi, dtheta = np.meshgrid(dphi, dtheta, indexing='ij')
+        dOmega = np.sin(np.deg2rad(theta)) * dphi * dtheta
+
+        # Loop over each energy bin
+        f_out = np.zeros(dims)
+        for idx in range(dims[2]):
+            temp = binned_statistic_2d(phi_prime.flatten(), theta_prime.flatten(),
+                                    statistic='mean',
+                                    values=self.f[:,:,idx].flatten() * dOmega.flatten(),
+                                    bins=dims[0:2],
+                                    range=[(0,360), (0,180)])
+            dtemp = binned_statistic_2d(phi_prime.flatten(), theta_prime.flatten(),
+                                        statistic='sum',
+                                        values=dOmega.flatten(),
+                                        bins=dims[0:2],
+                                        range=[(0,360), (0,180)])
+            f_out[:,:,idx] = temp[0] / dtemp[0]
+
+        # Reducing the distribution averages over theta. Convert all NaNs to 0
+        # so that the result is not NaN
+        f_out = np.where((f_out < 0) | np.isnan(f_out), 0, f_out)
+
+        #
+        # Create a new Distribution_Function
+        #
+        f_rot = Distribution_Function(f_out, self.phi, self.theta, self.energy,
+                                      self.mass, time=self.time, scpot=self.scpot,
+                                      E0=self.E0, E_low=self.E_low, E_high=self.E_high,
+                                      wrap_phi=self.wrap_phi,
+                                      theta_extrapolation=self.theta_extrapolation,
+                                      low_energy_extrapolation=self.low_energy_extrapolation,
+                                      high_energy_extrapolation=self.high_energy_extrapolation
+                                      )
+
+        return f_rot
+    
+    def rotate(self, par, perp, cs='vxb', orientations='p1p2'):
+        '''
+        Rotate a distribution function.
+
+        Parameters
+        ----------
+        par : (3,), float, `numpy.ndarray`
+            A vector that defines the parallel direction
+        perp : (3,), float, `numpy.ndarray`
+            A vector that defines the perpendiclar direction
+        cs : str
+            Coordinate system defining the orientation of the
+            `par` and `perp` directions
+                | cs  | par | perp | perp1    | perp2  |
+                ----------------------------------------
+                | vxb | B   | V    | -(vxb)xb | -(vxb) |
+        orientation : str, int, list
+            Orietnation(s) of the output distribution. See the `cart2sphr`
+            method for more details on integer values
+                | Orientaion            | x     | y     | z     |
+                -------------------------------------------------
+                | 'p1p1', 'perp1-perp2' | perp1 | perp2 | par   |
+                | 'pp1',  'par-perp1'   | par   | parp1 | perp2 |
+                | 'pp2',  'par-perp2'   | par   | perp2 | perp1 |
+
+        Returns
+        -------
+        f_rot : `Distribution_Function`
+            A new distribution function instance with the rotated distribution
+        '''
+        # Make sure orientations is iterable
+        _orientations = orientations
+        if np.isscalar(_orientations):
+            _orientations = list(_orientations)
+
+        # Convert look-directions to cartesian coordinates
+        #   - Convert look directions to incident vectors by inverting
+        phi, theta = np.meshgrid(self.phi, self.theta, indexing='ij')
+        x, y, z = self.sphr2cart(phi, theta)
+        xyz = np.stack([-x.flatten(), -y.flatten(), -z.flatten()], axis=1)
+        
+        # Rotate to the new coordinate system
+        T = self.transform_matrix(par, perp, cs=cs)
+        xyz_prime = T.apply(xyz)
+        x_prime = xyz_prime[:,0].reshape(x.shape)
+        y_prime = xyz_prime[:,1].reshape(y.shape)
+        z_prime = xyz_prime[:,2].reshape(z.shape)
+
+        #
+        # Transform back to spherical coordinates
+        #   * sphr2cart is where distribution gains new projections
+        #   * orientation=1  : perp1-perp2
+        #   * orientation=5  : par-perp1
+        #   * orientation=10 : par-perp2
+        # Don't redo all of the above work for different views of the same
+        # distribution functions.
+        #
+        f_rot = list()
+        for orientation in _orientations:
+            if orientation in ('p1p2', 'perp1-perp2'):
+                o_index = 1
+            elif orientation in ('pp1', 'par-perp1'):
+                o_index = 5
+            elif orientation in ('pp2', 'par-perp2'):
+                o_index = 10
+            else:
+                o_index = orientation
+            phi_prime, theta_prime = self.cart2sphr(x_prime, y_prime, z_prime,
+                                                    orientation=o_index,
+                                                    degrees=True)
+            phi_prime[phi_prime < 0] += 360
+
+            # Rebin the distribution
+            f_rot.append(self.rebin(phi_prime, theta_prime))
+
+        if np.isscalar(orientations):
+            f_rot = f_rot[0]
+        
+        return f_rot
+    
+    def plot_reduced(self, ax=None, vlim=4, clim=(1e-33, 1e-29), **kwargs):
 
         # Create the reduced distribution
         f = self.reduce('phi-E')
@@ -1472,13 +1672,159 @@ class Distribution_Function():
         v_bins = np.append(v, v[-1]+dv[-1])
 
         # Create the plot in polar coordinates
-        fig, axes = plt.subplots(nrows=1, ncols=1, squeeze=False,
-                                 subplot_kw={'projection': 'polar'})
+        if ax is None:
+            fig, ax = plt.subplots(nrows=1, ncols=1,
+                                   subplot_kw={'projection': 'polar'})
+        else:
+            fig = ax.figure
+
+        # Mask nan's and values <= 0 so they do not show up in pcolormesh
+        #   - We are log-scaling the color so values <= 0 do not work
+        isbad = (np.isnan(f) | (f <= 0))
+        if isbad.any():
+            f = np.ma.masked_array(f, mask=isbad)
+        
+        # Plot the distribution functions with colorbar
+        im = ax.pcolormesh(np.deg2rad(phi_bins), v_bins*1e-4, f.transpose(),
+                           norm='log', **kwargs)
+        ax.set_xticklabels([])
+        ax.set_ylim(0, vlim)
+        ax.set_yticklabels([])
+        im.set_clim(clim)
+
+        cbaxes = inset_axes(ax,
+                            width='2%', height='100%', loc=4,
+                            bbox_to_anchor=(0, 0, 1.1, 1),
+                            bbox_transform=ax.transAxes,
+                            borderpad=0)
+        cb = plt.colorbar(im, cax=cbaxes, orientation='vertical')
+        cb.ax.minorticks_on()
+        cb.set_label('f ($cm^{3}/s^{6}$)')
+
+        # Cartesian axes with transparent background on top of the polar axes
+        axc = fig.add_axes(ax.get_position().bounds)
+        axc.minorticks_on()
+        axc.patch.set_alpha(0.0)
+        axc.set_aspect('equal')
+        axc.set_xlabel('$V_{x}$ ($10^{4}$ km/s)')
+        axc.set_xlim(-vlim, vlim)
+        axc.set_ylabel('$V_{y}$ ($10^{4}$ km/s)')
+        axc.set_ylim(-vlim, vlim)
+
+        return fig, ax, axc
+    
+    def plot_rotate(self, *args, axes=None, **kwargs):
+        '''
+        Rotate a distribution and plot the before and after results.
+
+        Parameters
+        ----------
+        *args : `list`
+            Any arguments accepted by the `rotate` method.
+        axes : (2,), `list`, `matplotlib.pyplot.Axes`
+            The axes into which the distributions functions are plotted. Should
+            be in polar projection.
+        **kwargs : dict
+            Any keyword accepted by the `rotate` method.
+        '''
+
+        f_rot = self.rotate(*args, **kwargs)
+
+        if axes is None:
+            fig, axes = plt.subplots(nrows=1, ncols=2, squeeze=False,
+                                    subplot_kw={'projection': 'polar'})
+            plt.subplots_adjust(wspace=1.0, right=0.85)
+        else:
+            fig = axes.figure
+
+        #
+        # Original Distribution
+        #
+
+        # Polar axes
+        ax = axes[0,0]
+        fig, ax, axc = self.plot_reduced(ax=ax, cmap='turbo') #'nipy_spectral')
+        axc.set_xlabel('$V_{x}$ ($10^{4}$ km/s)')
+        axc.set_ylabel('$V_{y}$ ($10^{4}$ km/s)')
+
+        #
+        # Rotated Distribution
+        #
+
+        # Plot the 2D reduced distribution in the polar axes
+        ax = axes[0,1]
+        fig, ax, axc = f_rot.plot_reduced(ax=ax, cmap='turbo') #'nipy_spectral')
+        axc.set_xlabel('$V_{\perp 1}$ ($10^{4}$ km/s)')
+        axc.set_ylabel('$V_{\perp 2}$ ($10^{4}$ km/s)')
+
+        return fig, axes
+    
+    def plot_par_perp(self, *args, axes=None, **kwargs):
+        '''
+        Rotate a distribution and plot the before and after results.
+
+        Parameters
+        ----------
+        *args : `list`
+            Any arguments accepted by the `rotate` method.
+        axes : (3,), `list`, `matplotlib.pyplot.Axes`
+            The axes into which the distributions functions are plotted. Should
+            be in polar projection.
+        **kwargs : dict
+            Any keyword accepted by the `rotate` method.
+        '''
+        # Technically, not any kewyord accepted by `rotate`
+        if 'orientations' in kwargs:
+            kwargs.pop('orientations')
+
+        # Rotate the distribution function
+        f_rot = self.rotate(*args, **kwargs, orientations=['pp1', 'pp2', 'p1p2'])
+
+        # Create the figure
+        if axes is None:
+            fig, axes = plt.subplots(nrows=1, ncols=3, squeeze=False,
+                                     figsize=(9,2),
+                                     subplot_kw={'projection': 'polar'})
+            plt.subplots_adjust(wspace=1.5, bottom=0.13, right=0.85)
+        else:
+            fig = axes.figure
+
+        # Add time as title
+        time_dt = self.time.astype('datetime64[us]').astype(dt.datetime).item()
+        suptitle = time_dt.strftime('%Y-%m-%d %H:%M:%S.%f')
+        fig.suptitle(suptitle, x=0.5, y=0.92, horizontalalignment='center')
+        
+        #
+        # Par-Perp1
+        #
 
         ax = axes[0,0]
-        ax.pcolormesh(np.deg2rad(phi_bins), v_bins, f.transpose(),
-                      norm='log', **kwargs)
-        plt.show(block=False)
+        fig, ax, axc = f_rot[0].plot_rd(ax=ax, cmap='turbo',  # 'nipy_spectral',
+                                        vlim=4, clim=(1e-33, 1e-29))
+        axc.set_xlabel('$V_{\parallel}$ ($10^{4}$ km/s)')
+        axc.set_ylabel('$V_{\perp 1}$ ($10^{4}$ km/s)')
+
+        #
+        # Par-Perp2
+        #
+
+        ax = axes[0,1]
+        fig, ax, axc = f_rot[1].plot_rd(ax=ax, cmap='turbo',  # 'nipy_spectral',
+                                        vlim=4, clim=(1e-33, 1e-29))
+        axc.set_xlabel('$V_{\parallel}$ ($10^{4}$ km/s)')
+        axc.set_ylabel('$V_{\perp 2}$ ($10^{4}$ km/s)')
+
+        #
+        # Perp1-Perp2
+        #
+
+        ax = axes[0,2]
+        fig, ax, axc = f_rot[2].plot_rd(ax=ax, cmap='turbo',  # 'nipy_spectral',
+                                        vlim=4, clim=(1e-33, 1e-29))
+        axc.set_xlabel('$V_{\perp 1}$ ($10^{4}$ km/s)')
+        axc.set_ylabel('$V_{\perp 2}$ ($10^{4}$ km/s)')
+
+        return fig, axes
 
 
 def center_timestamps(fpi_data):
@@ -2599,7 +2945,7 @@ def precondition(dist, E0=100, E_low=10, E_high=None, scpot=None,
     f_out.attrs = dist.attrs
     f_out.attrs['Energy_e0'] = E0
     f_out.attrs['Lower_energy_integration_limit'] = E_low
-    f_out.attrs['Upper_energy_integration_limit'] = None
+    f_out.attrs['Upper_energy_integration_limit'] = E_high
     f_out.attrs['low_energy_extrapolation'] = low_energy_extrapolation
     f_out.attrs['high_energy_extrapolation'] = high_energy_extrapolation
     f_out.attrs['wrap_phi'] = wrap_phi
@@ -3118,8 +3464,9 @@ def relative_entropy(f, f_M, E0=100):
     #     phase space density.
     #   - Log of value <= 0 is nan. Avoid be replacing
     #     with 1 so that log(1) = 0
-    sv_rel = f / f_M
-    sv_rel = sv_rel.where(sv_rel > 0, 1)
+    with np.errstate(invalid='ignore', divide='ignore'):
+        sv_rel = f / f_M
+    sv_rel = sv_rel.where((sv_rel > 0) & np.isfinite(sv_rel), 1)
     try:
     # 1e12 converts s^3/cm^6 to s^3/m^6
         sv_rel = (1e12 * f * np.log(sv_rel)).integrate('phi')
