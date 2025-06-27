@@ -249,8 +249,8 @@ class MrMMS_SDC_API:
                 if r.ok:
                     break
                 else:
-                    print('Incorrect username or password. %d tries '
-                          'remaining.' % maxAttempts-nAttempts)
+                    print('Incorrect username or password. {0} tries '
+                          'remaining.'.format(maxAttempts-nAttempts))
                     nAttempts += 1
 
             # Failed log-in
@@ -707,7 +707,7 @@ class MrMMS_SDC_API:
             username = input('username: ')
 
         if password is None:
-            password = input('password: ')
+            password = getpass('password: ')
 
         # Save credentials
         self._session.auth = (username, password)

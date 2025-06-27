@@ -457,7 +457,7 @@ class Distribution_Function():
         # Create the distribution function
         vdf = cls(f.data, f['phi'].data, f['theta'].data, f['energy'].data,
                   mass=species_to_mass(f.attrs['species']),
-                  time=f['time'].data, **kwargs)
+                  time=time, **kwargs)
 
         # The distribution function has already been preconditioned
         #   - Normally, the original and preconditioned data are stored
@@ -1651,10 +1651,80 @@ class Distribution_Function():
         
         return f_rot
     
-    def plot_reduced(self, ax=None, vlim=4, clim=(1e-33, 1e-29), **kwargs):
+    def plot_reduced_1D(self, rtype='E', ax=None):
+        '''
+        Reduce the distribution function to 1D by averaging over two dimensions,
+        then plot it.
+
+        Parameters
+        ----------
+        rtype : str
+            Type of reduced distribution to create. Options are:
+            ('phi', 'theta', 'E', 'theta-phi', 'phi-E', 'theta-E')
+        ax : `matplotlib.pyplot.Axes`
+            The axes into which the reduced distribution function is plotted. Should
+            be in polar projection.
+        vlim : float
+            Bulk velocity magnitude limit of the x- and y-axes
+        clim : (2,), tuple, float
+            Phase space density limits of the color axis
+        **kwargs : dict
+            Any keyword accepted by the `matplotlib.pyplot.pcolormesh` function
+        
+        Returns
+        -------
+        fig : `matplotlib.figure.Figure`
+            Figure in which the reduced distribution is plotted
+        ax : `matplotlib.axes.Axes`
+            Polar axes in which the reduced distribution is plotted
+        '''
 
         # Create the reduced distribution
-        f = self.reduce('phi-E')
+        f = self.reduce(rtype)
+
+        # Create the plot in polar coordinates
+        if ax is None:
+            fig, ax = plt.subplots(nrows=1, ncols=1)
+        else:
+            fig = ax.figure
+        
+        ax.plot(f)
+        return fig, ax
+
+
+    
+    def plot_reduced_2D(self, rtype='phi-E', ax=None, vlim=4, clim=(1e-33, 1e-29), **kwargs):
+        '''
+        Reduce the distribution function to 2D by averaging over one dimension
+        then plot it.
+
+        Parameters
+        ----------
+        rtype : str
+            Type of reduced distribution to create. Options are:
+            ('phi', 'theta', 'E', 'theta-phi', 'phi-E', 'theta-E')
+        ax : `matplotlib.pyplot.Axes`
+            The axes into which the reduced distribution function is plotted. Should
+            be in polar projection.
+        vlim : float
+            Bulk velocity magnitude limit of the x- and y-axes
+        clim : (2,), tuple, float
+            Phase space density limits of the color axis
+        **kwargs : dict
+            Any keyword accepted by the `matplotlib.pyplot.pcolormesh` function
+        
+        Returns
+        -------
+        fig : `matplotlib.figure.Figure`
+            Figure in which the reduced distribution is plotted
+        ax : `matplotlib.axes.Axes`
+            Polar axes in which the reduced distribution is plotted
+        axc : `matplotlib.axes.Axes`
+            Cartesian axes placed over the polar axes
+        '''
+
+        # Create the reduced distribution
+        f = self.reduce(rtype)
 
         # Compute velocity of energy bins
         #   - Nonrelativistic: E = 0.5 * m * v**2
@@ -1721,7 +1791,7 @@ class Distribution_Function():
         ----------
         *args : `list`
             Any arguments accepted by the `rotate` method.
-        axes : (2,), `list`, `matplotlib.pyplot.Axes`
+        axes : (2,1), `list`, `matplotlib.pyplot.Axes`
             The axes into which the distributions functions are plotted. Should
             be in polar projection.
         **kwargs : dict
@@ -1743,7 +1813,7 @@ class Distribution_Function():
 
         # Polar axes
         ax = axes[0,0]
-        fig, ax, axc = self.plot_reduced(ax=ax, cmap='turbo') #'nipy_spectral')
+        fig, ax, axc = self.plot_reduced_2D(ax=ax, cmap='turbo') #'nipy_spectral')
         axc.set_xlabel('$V_{x}$ ($10^{4}$ km/s)')
         axc.set_ylabel('$V_{y}$ ($10^{4}$ km/s)')
 
@@ -1753,7 +1823,7 @@ class Distribution_Function():
 
         # Plot the 2D reduced distribution in the polar axes
         ax = axes[0,1]
-        fig, ax, axc = f_rot.plot_reduced(ax=ax, cmap='turbo') #'nipy_spectral')
+        fig, ax, axc = f_rot.plot_reduced_2D(ax=ax, cmap='turbo') #'nipy_spectral')
         axc.set_xlabel('$V_{\perp 1}$ ($10^{4}$ km/s)')
         axc.set_ylabel('$V_{\perp 2}$ ($10^{4}$ km/s)')
 
@@ -1799,8 +1869,8 @@ class Distribution_Function():
         #
 
         ax = axes[0,0]
-        fig, ax, axc = f_rot[0].plot_rd(ax=ax, cmap='turbo',  # 'nipy_spectral',
-                                        vlim=4, clim=(1e-33, 1e-29))
+        fig, ax, axc = f_rot[0].plot_reduced_2D(ax=ax, cmap='turbo',  # 'nipy_spectral',
+                                                vlim=4, clim=(1e-33, 1e-29))
         axc.set_xlabel('$V_{\parallel}$ ($10^{4}$ km/s)')
         axc.set_ylabel('$V_{\perp 1}$ ($10^{4}$ km/s)')
 
@@ -1809,8 +1879,8 @@ class Distribution_Function():
         #
 
         ax = axes[0,1]
-        fig, ax, axc = f_rot[1].plot_rd(ax=ax, cmap='turbo',  # 'nipy_spectral',
-                                        vlim=4, clim=(1e-33, 1e-29))
+        fig, ax, axc = f_rot[1].plot_reduced_2D(ax=ax, cmap='turbo',  # 'nipy_spectral',
+                                                vlim=4, clim=(1e-33, 1e-29))
         axc.set_xlabel('$V_{\parallel}$ ($10^{4}$ km/s)')
         axc.set_ylabel('$V_{\perp 2}$ ($10^{4}$ km/s)')
 
@@ -1819,8 +1889,8 @@ class Distribution_Function():
         #
 
         ax = axes[0,2]
-        fig, ax, axc = f_rot[2].plot_rd(ax=ax, cmap='turbo',  # 'nipy_spectral',
-                                        vlim=4, clim=(1e-33, 1e-29))
+        fig, ax, axc = f_rot[2].plot_reduced_2D(ax=ax, cmap='turbo',  # 'nipy_spectral',
+                                                vlim=4, clim=(1e-33, 1e-29))
         axc.set_xlabel('$V_{\perp 1}$ ($10^{4}$ km/s)')
         axc.set_ylabel('$V_{\perp 2}$ ($10^{4}$ km/s)')
 

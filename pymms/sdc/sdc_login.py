@@ -1,6 +1,147 @@
 #!/usr/bin/python
 import requests
 import urllib3
+from urllib.parse import parse_qs
+
+class SDC_Login():
+
+    def __init__(self, username=None, password=None):
+
+        self._sdc_home  = 'https://lasp.colorado.edu/mms/sdc'
+        self._info_type = 'download'
+
+        self._session = requests.Session()
+        if (username is not None) and (password is not None):
+            self._session.auth = (username, password)
+
+    def check_response(self, response):
+        '''
+        Check the status code for a requests response and perform
+        and appropriate action (e.g. log-in, raise error, etc.)
+
+        Parameters
+        ----------
+        response : `requests.response`
+            Response from the SDC
+
+        Returns
+        -------
+        r : `requests.response`
+            Updated response
+        '''
+
+        # OK
+        if response.status_code == 200:
+            r = response
+
+        # Authentication required
+        elif response.status_code == 401:
+            print('Log-in Required')
+
+            maxAttempts = 4
+            nAttempts = 1
+            while nAttempts <= maxAttempts:
+                # First time through will automatically use the
+                # log-in information from the config file. If that
+                # information is wrong/None, ask explicitly
+                if nAttempts > 1:
+                    self.credentials()
+
+                # Remake the request
+                #   - Ideally, self._session.send(response.request)
+                #   - However, the prepared request lacks the
+                #     authentication data
+                if response.request.method == 'POST':
+                    query = parse_qs(response.request.body)
+                    r = self._session.post(response.request.url, data=query)
+                else:
+                    r = self._session.get(response.request.url)
+
+                # Another attempt
+                if r.ok:
+                    break
+                else:
+                    print('Incorrect username or password. {0} tries '
+                          'remaining.'.format(maxAttempts-nAttempts))
+                    nAttempts += 1
+
+            # Failed log-in
+            if nAttempts > maxAttempts:
+                raise ConnectionError('Failed log-in.')
+
+        else:
+            raise ConnectionError(response.reason)
+
+        # Return the resulting request
+        return r
+
+    def get(self):
+        '''
+        Retrieve information from the SDC.
+
+        Returns
+        -------
+        r : `session.response`
+            Response to the request posted to the SDC.
+        '''
+        # Build the URL sans query
+        url = self.url(query=False)
+
+        # Check on query
+        #   - Use POST if the URL is too long
+        r = self._session.get(url, params=self.query())
+        if r.status_code == 414:
+            r = self._session.post(url, data=self.query())
+
+        # Check if everything is ok
+        if not r.ok:
+            r = self.check_response(r)
+
+        # Return the response for the requested URL
+        return r
+
+    def credentials(self, username=None, password=None):
+        '''
+        Set Log-In credentials for the SDC
+
+        Parameters
+        ----------
+        username (str):     Account username
+        password (str):     Account password
+        '''
+
+        # Ask for inputs
+        if username is None:
+            username = input('username: ')
+
+        if password is None:
+            password = input('password: ')
+
+        # Save credentials
+        self._session.auth = (username, password)
+
+    def post(self):
+        '''
+        Retrieve data from the SDC.
+
+        Returns
+        -------
+        r : `session.response`
+            Response to the request posted to the SDC.
+        '''
+        # Build the URL sans query
+        url = self.url(query=False)
+
+        # Check on query
+        r = self._session.post(url, data=self.query())
+
+        # Check if everything is ok
+        if not r.ok:
+            r = self.check_response(r)
+
+        # Return the response for the requested URL
+        return r
+
 
 def parse_form(r):
     '''Parse key-value pairs from the log-in form
