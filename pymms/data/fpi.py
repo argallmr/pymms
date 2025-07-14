@@ -1490,6 +1490,7 @@ class Distribution_Function():
             `par` and `perp` directions
                 | cs  | par | perp | perp1    | perp2  |
                 -----------------------------------------------
+                | xyz | z   | x    | x        | y      |
                 | vxb | B   | V    | -(vxb)xb | -(vxb) |
         
         Returns
@@ -1508,10 +1509,14 @@ class Distribution_Function():
 
         # Create orthonormal vectors perpendicular to the parallel direction using
         # the perp vector as a guide
-        if cs == 'vxb':
+        if cs == 'xyz':
+            par = np.array([0,0,1])
+            perp1 = np.array([1,0,0])
+            perp2 = np.array([0,1,0])
+        elif cs == 'vxb':
             perp2 = -np.cross(perp_hat, par_hat) # -v x b
             perp2 /= np.linalg.norm(perp2, ord=2)
-            perp1 = np.cross(perp2, par) # (v x b) x b
+            perp1 = np.cross(perp2, par) # -(v x b) x b
             perp1 /= np.linalg.norm(perp1, ord=2)
         else:
             raise ValueError('Coordinate system must be (vxb, ), not {0}'
@@ -1586,6 +1591,7 @@ class Distribution_Function():
             `par` and `perp` directions
                 | cs  | par | perp | perp1    | perp2  |
                 ----------------------------------------
+                | xyz | z   | x    | x        | y      |
                 | vxb | B   | V    | -(vxb)xb | -(vxb) |
         orientation : str, int, list
             Orietnation(s) of the output distribution. See the `cart2sphr`
@@ -1693,7 +1699,8 @@ class Distribution_Function():
 
 
     
-    def plot_reduced_2D(self, rtype='phi-E', ax=None, vlim=4, clim=(1e-33, 1e-29), **kwargs):
+    def plot_reduced_2D(self, rtype='phi-E', ax=None, contours=True,
+                        vlim=None, vscale=None, clim=None, nlevels=20):
         '''
         Reduce the distribution function to 2D by averaging over one dimension
         then plot it.
@@ -1706,12 +1713,18 @@ class Distribution_Function():
         ax : `matplotlib.pyplot.Axes`
             The axes into which the reduced distribution function is plotted. Should
             be in polar projection.
+        contours : bool
+            If true, contour lines will be drawn over the distribution
+        nlevels : int
+            Number of contour levels to draw
+        vscale : int
+            Power of 10 by which to scale the velocity. 4 is a good number
+            for electrons and 3 is a good number for ions.
         vlim : float
-            Bulk velocity magnitude limit of the x- and y-axes
+            Bulk velocity magnitude limit of the x- and y-axes. Applied after `vscale`
+            so actual limits should be scaled by `vscale`.
         clim : (2,), tuple, float
             Phase space density limits of the color axis
-        **kwargs : dict
-            Any keyword accepted by the `matplotlib.pyplot.pcolormesh` function
         
         Returns
         -------
@@ -1740,6 +1753,15 @@ class Distribution_Function():
         #   - v: use bin centers, add upper bin edge
         phi_bins = np.append(self.phi - dphi/2, self.phi[-1] + dphi/2)
         v_bins = np.append(v, v[-1]+dv[-1])
+        units = 'km/s'
+        if vscale is not None:
+            v_bins *= 10**-vscale
+            units = '$10^{{{0:d}}}$ {1}'.format(vscale, units)
+
+        if vlim is None:
+            vlim = v_bins[-1]
+        if clim is None:
+            clim = (f.data.flatten()[f.data.flatten() != 0].min(), f.max().data)
 
         # Create the plot in polar coordinates
         if ax is None:
@@ -1755,13 +1777,25 @@ class Distribution_Function():
             f = np.ma.masked_array(f, mask=isbad)
         
         # Plot the distribution functions with colorbar
-        im = ax.pcolormesh(np.deg2rad(phi_bins), v_bins*1e-4, f.transpose(),
-                           norm='log', **kwargs)
+        im = ax.pcolormesh(np.deg2rad(phi_bins), v_bins, f.transpose(),
+                           norm='log', cmap='turbo')
+        ax.set_title(self.time.astype('datetime64[us]').astype(dt.datetime).item()
+                     .strftime('%Y-%m-%d %H:%M:%S.%f'))
         ax.set_xticklabels([])
         ax.set_ylim(0, vlim)
         ax.set_yticklabels([])
         im.set_clim(clim)
 
+        # Overplot the contours
+        if contours:
+            f = np.append(f, f[[0,],:], axis=0)
+            f = np.append(f, f[:,[0,]], axis=1)
+            c = ax.contour(np.deg2rad(phi_bins), v_bins, f.transpose(),
+                           norm='log', vmin=clim[0], vmax=clim[1],
+                           colors='black', alpha=0.5, linewidths=1.0,
+                           levels=np.logspace(np.log10(clim[0]), np.log10(clim[1]), num=nlevels))
+
+        # Create a colorbar
         cbaxes = inset_axes(ax,
                             width='2%', height='100%', loc=4,
                             bbox_to_anchor=(0, 0, 1.1, 1),
@@ -1776,9 +1810,9 @@ class Distribution_Function():
         axc.minorticks_on()
         axc.patch.set_alpha(0.0)
         axc.set_aspect('equal')
-        axc.set_xlabel('$V_{x}$ ($10^{4}$ km/s)')
+        axc.set_xlabel('$V_{x}$ (' + units + ')')
         axc.set_xlim(-vlim, vlim)
-        axc.set_ylabel('$V_{y}$ ($10^{4}$ km/s)')
+        axc.set_ylabel('$V_{y}$ (' + units + ')')
         axc.set_ylim(-vlim, vlim)
 
         return fig, ax, axc
@@ -1829,26 +1863,28 @@ class Distribution_Function():
 
         return fig, axes
     
-    def plot_par_perp(self, *args, axes=None, **kwargs):
+    def plot_par_perp(self, par, perp, cs='vxb',
+                      axes=None, **kwargs):
         '''
         Rotate a distribution and plot the before and after results.
 
         Parameters
         ----------
-        *args : `list`
-            Any arguments accepted by the `rotate` method.
+        par : (3,), float, `numpy.ndarray`
+            A vector that defines the parallel direction
+        perp : (3,), float, `numpy.ndarray`
+            A vector that defines the perpendiclar direction
+        cs : str
+            Coordinate system defining the orientation of the
+            `par` and `perp` directions. See `rotate` method for more details.
         axes : (3,), `list`, `matplotlib.pyplot.Axes`
             The axes into which the distributions functions are plotted. Should
             be in polar projection.
         **kwargs : dict
-            Any keyword accepted by the `rotate` method.
+            Any keyword accepted by the `plot_reduce_2D` method.
         '''
-        # Technically, not any kewyord accepted by `rotate`
-        if 'orientations' in kwargs:
-            kwargs.pop('orientations')
-
         # Rotate the distribution function
-        f_rot = self.rotate(*args, **kwargs, orientations=['pp1', 'pp2', 'p1p2'])
+        f_rot = self.rotate(par, perp, cs=cs, orientations=['pp1', 'pp2', 'p1p2'])
 
         # Create the figure
         if axes is None:
@@ -1867,32 +1903,35 @@ class Distribution_Function():
         #
         # Par-Perp1
         #
-
         ax = axes[0,0]
-        fig, ax, axc = f_rot[0].plot_reduced_2D(ax=ax, cmap='turbo',  # 'nipy_spectral',
-                                                vlim=4, clim=(1e-33, 1e-29))
-        axc.set_xlabel('$V_{\parallel}$ ($10^{4}$ km/s)')
-        axc.set_ylabel('$V_{\perp 1}$ ($10^{4}$ km/s)')
+        fig, ax, axc = f_rot[0].plot_reduced_2D(ax=ax, **kwargs)
+        ax.set_title('')
+        xlabel = axc.get_xlabel().split(' ')
+        ylabel = axc.get_ylabel().split(' ')
+        axc.set_xlabel(' '.join(('$V_{\parallel}$ ', *xlabel[1:])))
+        axc.set_ylabel(' '.join(('$V_{\perp 1}$ ', *ylabel[1])))
 
         #
         # Par-Perp2
         #
-
         ax = axes[0,1]
-        fig, ax, axc = f_rot[1].plot_reduced_2D(ax=ax, cmap='turbo',  # 'nipy_spectral',
-                                                vlim=4, clim=(1e-33, 1e-29))
-        axc.set_xlabel('$V_{\parallel}$ ($10^{4}$ km/s)')
-        axc.set_ylabel('$V_{\perp 2}$ ($10^{4}$ km/s)')
+        fig, ax, axc = f_rot[1].plot_reduced_2D(ax=ax, **kwargs)
+        ax.set_title('')
+        xlabel = axc.get_xlabel().split(' ')
+        ylabel = axc.get_ylabel().split(' ')
+        axc.set_xlabel(' '.join(('$V_{\parallel}$ ', *xlabel[1:])))
+        axc.set_ylabel(' '.join(('$V_{\perp 1}$ ', *ylabel[1])))
 
         #
         # Perp1-Perp2
         #
-
         ax = axes[0,2]
-        fig, ax, axc = f_rot[2].plot_reduced_2D(ax=ax, cmap='turbo',  # 'nipy_spectral',
-                                                vlim=4, clim=(1e-33, 1e-29))
-        axc.set_xlabel('$V_{\perp 1}$ ($10^{4}$ km/s)')
-        axc.set_ylabel('$V_{\perp 2}$ ($10^{4}$ km/s)')
+        fig, ax, axc = f_rot[2].plot_reduced_2D(ax=ax, **kwargs)
+        ax.set_title('')
+        xlabel = axc.get_xlabel().split(' ')
+        ylabel = axc.get_ylabel().split(' ')
+        axc.set_xlabel(' '.join(('$V_{\parallel}$ ', *xlabel[1:])))
+        axc.set_ylabel(' '.join(('$V_{\perp 1}$ ', *ylabel[1])))
 
         return fig, axes
 
