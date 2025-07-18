@@ -1,3 +1,4 @@
+import datetime as dt
 from pymms.data import fgm, fpi
 from matplotlib import pyplot as plt
 
@@ -65,9 +66,9 @@ def distribution(sc, instr, mode, time, **kwargs):
     ymd = t_fpi.strftime('%Y-%m-%d')
     hms = t_fpi.strftime('%H:%M:%S.%f')
     suptitle = ' '.join((sc.upper(), instr.upper(), ymd, hms))
-    fig.suptitle(suptitle, x=0.5, y=0.92, horizontalalignment='center')
+    # fig.suptitle(suptitle, x=0.5, y=0.92, horizontalalignment='center')
 
-    plt.show(block=False)
+    return fig, axes
 
 
 if __name__ == '__main__':
@@ -123,6 +124,9 @@ if __name__ == '__main__':
     parser.add_argument('-c', '--contours',
                         help='Draw contours on the plot.',
                         action='store_true')
+    parser.add_argument('-z', '--horizontal',
+                        help='Plot the distributions horizontally instead of vertically.',
+                        action='store_true')
     parser.add_argument('--nlevels',
                         type=int,
                         default=20,
@@ -139,9 +143,10 @@ if __name__ == '__main__':
         clim = (args.cmin, args.cmax)
 
     # Create the plot
-    distribution(args.sc, args.instr, args.mode, time,
-                 clim=clim, vlim=args.vlim, vscale=args.vscale,
-                 contours=args.contours, nlevels=args.nlevels)
+    fig, axes = distribution(args.sc, args.instr, args.mode, time,
+                             clim=clim, vlim=args.vlim, vscale=args.vscale,
+                             contours=args.contours, nlevels=args.nlevels,
+                             horizontal=args.horizontal)
     
     # Save to directory
     if args.dir is not None:

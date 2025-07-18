@@ -1864,7 +1864,7 @@ class Distribution_Function():
         return fig, axes
     
     def plot_par_perp(self, par, perp, cs='vxb',
-                      axes=None, **kwargs):
+                      axes=None, horizontal=False, **kwargs):
         '''
         Rotate a distribution and plot the before and after results.
 
@@ -1880,25 +1880,34 @@ class Distribution_Function():
         axes : (3,), `list`, `matplotlib.pyplot.Axes`
             The axes into which the distributions functions are plotted. Should
             be in polar projection.
+        horizontal : bool
+            Plot the distributions in a horizontal row instead of a vertical column
         **kwargs : dict
             Any keyword accepted by the `plot_reduce_2D` method.
         '''
         # Rotate the distribution function
         f_rot = self.rotate(par, perp, cs=cs, orientations=['pp1', 'pp2', 'p1p2'])
 
-        # Create the figure
-        if axes is None:
-            fig, axes = plt.subplots(nrows=1, ncols=3, squeeze=False,
-                                     figsize=(9,2),
-                                     subplot_kw={'projection': 'polar'})
-            plt.subplots_adjust(wspace=1.5, bottom=0.13, right=0.85)
-        else:
-            fig = axes.figure
-
-        # Add time as title
+        # Time for the title
         time_dt = self.time.astype('datetime64[us]').astype(dt.datetime).item()
         suptitle = time_dt.strftime('%Y-%m-%d %H:%M:%S.%f')
-        fig.suptitle(suptitle, x=0.5, y=0.92, horizontalalignment='center')
+
+        # Create the figure
+        if axes is None:
+            if horizontal:
+                fig, axes = plt.subplots(nrows=1, ncols=3, squeeze=False,
+                                        figsize=(9,2),
+                                        subplot_kw={'projection': 'polar'})
+                plt.subplots_adjust(wspace=1.5, bottom=0.13, right=0.85)
+                fig.suptitle(suptitle, x=0.5, y=0.92, horizontalalignment='center')
+            else:
+                fig, axes = plt.subplots(nrows=3, ncols=1, squeeze=False,
+                                         figsize=(3.8,7),
+                                         subplot_kw={'projection': 'polar'})
+                plt.subplots_adjust(hspace=0.4, left=0.05, right=0.95, top=0.95)
+                fig.suptitle(suptitle, x=0.5, y=0.99, horizontalalignment='center')
+        else:
+            fig = axes.figure
         
         #
         # Par-Perp1
@@ -1909,29 +1918,29 @@ class Distribution_Function():
         xlabel = axc.get_xlabel().split(' ')
         ylabel = axc.get_ylabel().split(' ')
         axc.set_xlabel(' '.join(('$V_{\parallel}$ ', *xlabel[1:])))
-        axc.set_ylabel(' '.join(('$V_{\perp 1}$ ', *ylabel[1])))
+        axc.set_ylabel(' '.join(('$V_{\perp 1}$ ', *ylabel[1:])))
 
         #
         # Par-Perp2
         #
-        ax = axes[0,1]
+        ax = axes[0,1] if horizontal else axes[1,0]
         fig, ax, axc = f_rot[1].plot_reduced_2D(ax=ax, **kwargs)
         ax.set_title('')
         xlabel = axc.get_xlabel().split(' ')
         ylabel = axc.get_ylabel().split(' ')
         axc.set_xlabel(' '.join(('$V_{\parallel}$ ', *xlabel[1:])))
-        axc.set_ylabel(' '.join(('$V_{\perp 1}$ ', *ylabel[1])))
+        axc.set_ylabel(' '.join(('$V_{\perp 1}$ ', *ylabel[1:])))
 
         #
         # Perp1-Perp2
         #
-        ax = axes[0,2]
+        ax = axes[0,2] if horizontal else axes[2,0]
         fig, ax, axc = f_rot[2].plot_reduced_2D(ax=ax, **kwargs)
         ax.set_title('')
         xlabel = axc.get_xlabel().split(' ')
         ylabel = axc.get_ylabel().split(' ')
         axc.set_xlabel(' '.join(('$V_{\parallel}$ ', *xlabel[1:])))
-        axc.set_ylabel(' '.join(('$V_{\perp 1}$ ', *ylabel[1])))
+        axc.set_ylabel(' '.join(('$V_{\perp 1}$ ', *ylabel[1:])))
 
         return fig, axes
 
