@@ -532,7 +532,7 @@ class Distribution_Function():
         
         # Do not supply scpot, E0, E_low, E_high because the energy bins
         # have already been adjusted.
-        df = Distribution_Function(f, self._phi, self._theta, self._energy,
+        df = Distribution_Function(f[:-1, 1:-1, 1:-1], self.phi, self.theta, self.energy,
                                    self.mass, E0=self.E0, E_low=None,
                                    low_energy_extrapolation=False,
                                    high_energy_extrapolation=False)
@@ -761,7 +761,7 @@ class Distribution_Function():
         f : `xarray.DataArray`
             Reduced distribution
         '''
-        rtypes = ('phi', 'theta', 'E', 'theta-phi', 'phi-E', 'theta-E')
+        rtypes = ('phi', 'theta', 'E', 'theta-phi', 'phi-E', 'theta-E', 'v')
 
         if rtype == 'phi':
             func = self._reduce_phi
@@ -775,12 +775,135 @@ class Distribution_Function():
             func = self._reduce_phi_E
         elif rtype == 'theta-E':
             func = self._reduce_theta_E
+        elif rtype == 'v':
+            func = self._reduce_v
         else:
             raise ValueError('rtype must be {0}, not {1}'.format(rtypes, rtype))
 
         self.precondition()
         f = func(**kwargs)
         return f
+
+    def _reduce_v_weighted_avg(self, w, v, ipos, ineg, axis=0):
+            
+            # Transpose so that the desired axis is first
+            if axis in (0, 1):
+                f = self.f
+            elif axis == 2:
+                f = self.f.transpose(1, 0, 2)
+                w = w.transpose(1, 0, 2)
+                v = v.transpose(1, 0, 2)
+                dv = dv.transpose(1, 0, 2)
+            else:
+                raise ValueError('axis must be (0, 1, 2), not {0}'.format(axis))
+
+            # Weighted average along the positive direction
+            f_pos = (np.sum(np.sum(w[ipos,:,:] * f[ipos,:,:],
+                                  axis=0),
+                            axis=0)
+                     / np.sum(w[ipos,:,:])
+                     )
+            
+            # Weighted average along the negative direction
+            f_neg = (np.sum(np.sum(w[ineg,:,:] * f[ineg,:,:],
+                                  axis=0),
+                            axis=0)
+                     / np.sum(w[ineg,:,:])
+                     )
+            
+            # Order from - to +
+            f = np.concatenate([np.flipud(f_neg), f_pos])
+            
+            # Order velocities from most - to most +
+            vel = np.concatenate([np.flipud(-v), v])
+
+            # Combine into a data array
+            #   - Convert velocity from cm/s to km/s
+            f_out = xr.DataArray(f,
+                                 dims=['velocity',],
+                                 coords={'velocity': vel*1e-5})
+            
+            return f_out
+    
+    def _reduce_v(self, component='x', dphi=None, dtheta=None):
+        '''
+        Calculate the reduced 1D distribution, f(E), by averaging
+        over the theta- and phi-direction
+
+        Note: f must have units of phase space density
+
+        Returns
+        -------
+        f : `numpy.ndarray`
+            Reduced 1D distribution function as a function of energy
+        '''
+        if dphi is None:
+            dphi = np.rad2deg(np.diff(self.phi).mean())
+        if dtheta is None:
+            dtheta = np.rad2deg(np.diff(self.theta).mean())
+
+        # Convert angle to radians
+        phi = np.deg2rad(self.phi)[:, np.newaxis, np.newaxis]
+        theta = np.deg2rad(self.theta)[np.newaxis, :, np.newaxis]
+
+        # Convert energy to velocity
+        v_mag = np.sqrt(2 * self.energy * eV2J / self.mass) * 1e2 # (cm/s)
+        v_mag = v_mag[np.newaxis, np.newaxis, :]
+        
+        # Determine velocity bin size
+        dE = self.deltaE()
+        # Separate mass from energy terms to prevent over/underflow
+        dv = 1/np.sqrt(self.mass) * 1/np.sqrt((2*eV2J*self.energy)) * eV2J*dE * 1e2 # cm/s
+        dv = dv[np.newaxis, np.newaxis, :]
+
+        # Calculate the components
+        vx = v_mag * np.sin(theta) * np.cos(phi)
+        vy = v_mag * np.sin(theta) * np.sin(phi)
+        vz = v_mag * np.cos(theta)
+        
+        # weights for averaging
+        w = v_mag**2 * np.sin(theta) * dtheta * dphi
+        w = np.repeat(w, self.f.shape[0], axis=0)
+
+        # Weight for averaging reduced distribution
+        #   - Volume of each cell = dv * v*dtheta * v*sin(theta)*dphi)
+        #   - weighted_mean = np.sum(w*x) / np.sum(w)
+        #   - Cells are weighted by their volume
+        #   - w = v**2 * sin(theta) * dv * dtheta * dphi
+        #   - v and dv are constant in sums over phi and theta
+        #   => w = sin(theta) * dtheta * dphi
+        phi = phi.squeeze()
+        theta = theta.squeeze()
+        v_mag = v_mag.squeeze()
+        if component == 'x':
+            # Positive and negative directions
+            iposx = ((phi >= 0) & (phi < np.pi/2)) | ((phi >= 3*np.pi/2) & (phi <= 2*np.pi))
+            inegx = ((phi >= np.pi/2) & (phi < 3*np.pi/2))
+
+            # Reduce the distribution
+            f_out = self._reduce_v_weighted_avg(w, v_mag, iposx, inegx, axis=0)
+        
+        elif component == 'y':
+            # Positive and negative directions
+            iposy = ((phi >= 0) & (phi < np.pi))
+            inegy = ((phi >= np.pi) & (phi < 2*np.pi))
+
+            # Reduce the distribution
+            f_out = self._reduce_v_weighted_avg(w, v_mag, iposy, inegy, axis=1)
+        
+        elif component == 'z':
+            # Positive and negative directions
+            iposz = ((theta >= 0) & (theta < np.pi/2))
+            inegz = ((theta > np.pi/2) & (theta <= np.pi))
+
+            # Reduce the distribution
+            f_out = self._reduce_v_weighted_avg(w, v_mag, iposz, inegz, axis=2)
+        
+        else:
+            raise ValueError('Invalid component {0}. Must be (x, y, z).'
+                             .format(component))
+
+        return f_out
     
     def _reduce_E(self, dphi=None, dtheta=None):
         '''
@@ -1598,7 +1721,7 @@ class Distribution_Function():
             method for more details on integer values
                 | Orientaion            | x     | y     | z     |
                 -------------------------------------------------
-                | 'p1p1', 'perp1-perp2' | perp1 | perp2 | par   |
+                | 'p1p2', 'perp1-perp2' | perp1 | perp2 | par   |
                 | 'pp1',  'par-perp1'   | par   | parp1 | perp2 |
                 | 'pp2',  'par-perp2'   | par   | perp2 | perp1 |
 
@@ -1863,8 +1986,64 @@ class Distribution_Function():
 
         return fig, axes
     
-    def plot_par_perp(self, par, perp, cs='vxb',
-                      axes=None, horizontal=False, **kwargs):
+    def plot_par_perp_1D(self, par, perp, cs='vxb', ax=None):
+        '''
+        Rotate a distribution into field-aligned coordinates and plot the
+        1D reduced parallel and perpendicular distributions along with a
+        reduced Maxwellian distribution
+
+        Parameters
+        ----------
+        par : (3,), float, `numpy.ndarray`
+            A vector that defines the parallel direction
+        perp : (3,), float, `numpy.ndarray`
+            A vector that defines the perpendiclar direction
+        cs : str
+            Coordinate system defining the orientation of the
+            `par` and `perp` directions. See `rotate` method for more details.
+        ax : `matplotlib.pyplot.Axes`
+            The axes into which the distributions functions are plotted. Should
+            be in polar projection.
+        '''
+        # Rotate the distribution function
+        f_new = self.rotate(par, perp, cs=cs, orientations=['pp1', 'p1p2'])
+
+        # Reduce the distribution to 1D
+        f_par = f_new[0].reduce('v', component='x')
+        f_perp1 = f_new[0].reduce('v', component='y')
+        f_perp2 = f_new[1].reduce('v', component='y')
+
+        # Create a reduced 1D Maxwellian distribution
+        f_max = f_new[0].maxwellian()
+        f_max_par = f_max.reduce('v', component='x')
+
+        if ax is None:
+            fig, axes = plt.subplots(nrows=1, ncols=1, squeeze=False)
+            ax = axes[0,0]
+        else:
+            fig = ax.figure
+
+        # Plot the reduced 1D distributions
+        f_par.plot(ax=ax, color='red', label='$f_{\parallel}$', marker='o')
+        f_perp1.plot(ax=ax, color='blue', label='$f_{\perp_{1}}$', marker='o')
+        f_perp2.plot(ax=ax, color='green', label='$f_{\perp_{2}}$', marker='o')
+        f_max_par.plot(ax=ax, color='magenta', label='$f_{M}$', marker='+')
+        ax.legend()
+
+        ax.set_xscale('symlog', linscale=0.1, linthresh=1e3)
+        ax.set_xlabel('v (km/s)')
+        ax.set_yscale('log')
+        ax.set_ylabel('f ($s^{3}/cm^{6}$)')
+        ax.set_ylim(f_par[f_par > 0].min(), f_par.max())
+
+        f_time = self.time.astype('datetime64[us]').astype(dt.datetime).item()
+        title = '{0}'.format(f_time.strftime('%Y-%m-%d %H:%M:%S.%f'))
+        ax.set_title(title)
+
+        return fig, axes
+    
+    def plot_par_perp_2D(self, par, perp, cs='vxb',
+                         axes=None, horizontal=False, **kwargs):
         '''
         Rotate a distribution and plot the before and after results.
 
@@ -1929,7 +2108,7 @@ class Distribution_Function():
         xlabel = axc.get_xlabel().split(' ')
         ylabel = axc.get_ylabel().split(' ')
         axc.set_xlabel(' '.join(('$V_{\parallel}$ ', *xlabel[1:])))
-        axc.set_ylabel(' '.join(('$V_{\perp 1}$ ', *ylabel[1:])))
+        axc.set_ylabel(' '.join(('$V_{\perp 2}$ ', *ylabel[1:])))
 
         #
         # Perp1-Perp2
@@ -1939,8 +2118,8 @@ class Distribution_Function():
         ax.set_title('')
         xlabel = axc.get_xlabel().split(' ')
         ylabel = axc.get_ylabel().split(' ')
-        axc.set_xlabel(' '.join(('$V_{\parallel}$ ', *xlabel[1:])))
-        axc.set_ylabel(' '.join(('$V_{\perp 1}$ ', *ylabel[1:])))
+        axc.set_xlabel(' '.join(('$V_{\perp 1}$ ', *xlabel[1:])))
+        axc.set_ylabel(' '.join(('$V_{\perp 2}$ ', *ylabel[1:])))
 
         return fig, axes
 

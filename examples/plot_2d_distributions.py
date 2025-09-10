@@ -58,7 +58,7 @@ def distribution(sc, instr, mode, time, **kwargs):
     perp = des_moms['velocity'].sel(time=t_fpi, method='nearest')
 
     # Rotate and plot the 
-    fig, axes = f.plot_par_perp(par, perp, cs='vxb', **kwargs)
+    fig, axes = f.plot_par_perp_2D(par, perp, cs='vxb', **kwargs)
 
     # Set the figure title
     #   - This can be simplified in matplotlib v3.8 with fig.get_suptitle()

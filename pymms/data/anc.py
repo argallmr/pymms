@@ -325,24 +325,49 @@ class ANCDownloader(util.Downloader):
         file = self.local_path(interval)
         
         # A function to parse the times in the file
+        #  - dt.datetime.strptime and np.datetime64 both crash on leapseconds
         date_parser = lambda x: dt.datetime.strptime(x, '%Y-%jT%H:%M:%S.%f')
         
         # Open and read the file
-        with open(file, 'r') as f:
-            attrs = self.parse_header(f)
-            line = f.readline()
-            df = read_csv(f, 
-                          delim_whitespace=True,
-                          header=None,
-                          names=['time', 'Elapsed Sec', 'q1', 'q2', 'q3', 'qc',
-                                 'wX', 'wY', 'wZ', 'w-Phase', 'z-RA', 'z-Dec',
-                                 'z-Phase', 'L-RA', 'L-Dec', 'L-Phase', 'P-RA',
-                                 'P-Dec', 'P-Phase', 'Nut', 'QF'],
-                          index_col=0,
-                          parse_dates=True,
-                          date_parser=date_parser,
-                          skipfooter=1,
-                          engine='python')
+        try:
+            with open(file, 'r') as f:
+                attrs = self.parse_header(f)
+                attrs['files'] = str(file)
+                line = f.readline()
+                
+                # Use simple date parser
+                df = read_csv(f, 
+                              delim_whitespace=True,
+                              header=None,
+                              names=['time', 'Elapsed Sec', 'q1', 'q2', 'q3', 'qc',
+                                      'wX', 'wY', 'wZ', 'w-Phase', 'z-RA', 'z-Dec',
+                                      'z-Phase', 'L-RA', 'L-Dec', 'L-Phase', 'P-RA',
+                                      'P-Dec', 'P-Phase', 'Nut', 'QF'],
+                              index_col=0,
+                              parse_dates=True,
+                              date_parser=date_parser,
+                              skipfooter=1,
+                              engine='python')
+            
+            # Use a date parser that handles leap seconds
+            #   - ValueError: second must be in 0..59
+        except ValueError:
+            with open(file, 'r') as f:
+                attrs = self.parse_header(f)
+                attrs['files'] = str(file)
+                line = f.readline()
+                df = read_csv(f, 
+                              delim_whitespace=True,
+                              header=None,
+                              names=['time', 'Elapsed Sec', 'q1', 'q2', 'q3', 'qc',
+                                      'wX', 'wY', 'wZ', 'w-Phase', 'z-RA', 'z-Dec',
+                                      'z-Phase', 'L-RA', 'L-Dec', 'L-Phase', 'P-RA',
+                                      'P-Dec', 'P-Phase', 'Nut', 'QF'],
+                              index_col=0,
+                              parse_dates=True,
+                              date_parser=_date_parser,
+                              skipfooter=1,
+                              engine='python')
         
         # Convert the dataframe to a dataset
         ds = self.df2ds(df)
@@ -571,6 +596,28 @@ class ANCDownloader(util.Downloader):
         return response.json()
 
 
+def _date_parser(time_str):
+    '''
+    A date parser that handles leap seconds by converting the time portion
+    to a timedelta. Note that leap seconds are still not handled properly
+    internally by `datetime.datetime`
+    '''
+    
+    # Convert year + year-day directly to a date
+    date = dt.datetime.strptime(time_str[0:8], '%Y-%j')
+    
+    # Extract the time
+    time = re.match('([0-2][0-9])'  # Hour
+                    ':([0-5][0-9])' # Minute
+                    ':([0-6][0-9])' # Seconds
+                    '.([0-9]{3})',  # Milliseconds
+                        time_str[9:]).groups()
+    delta = dt.timedelta(hours=int(time[0]), minutes=int(time[1]),
+                            seconds=int(time[2]), milliseconds=int(time[3]))
+
+    return date + delta
+
+
 def sort_file_names(files):
 
     # Make sure we have a list-like iterable
@@ -693,6 +740,7 @@ def load_ancillary(sc='mms1', product='defatt',
     
     anc = ANCDownloader(sc, product, start_date, end_date)
     data = anc.load()
+
     data = data.sel(indexers={'time': slice(start_date, end_date)})
     
     # Add data descriptors to attributes

@@ -27,11 +27,16 @@ def check_instr(instr):
         raise ValueError('Instr "{0}" is not in {1}'.format(instr, instrs))
 
 
-def check_level(level, instr='fgm'):
+def check_level(level, instr='fgm', mode='srvy'):
     if instr == 'fgm':
         levels = ('l2',)
     else:
-        levels = ('l1a', 'l2pre')
+        if mode in ('slow', 'fast', 'f128'):
+            levels = ('l1a',)
+        elif mode == 'srvy':
+            levels = ('l1b', 'l2pre', 'ql')
+        else: # brst
+            levels = ('l1a', 'l1b', 'l2pre', 'ql')
 
     if level not in levels:
         raise ValueError('Level "{0}" is not in {1}'.format(level, levels))
@@ -189,7 +194,7 @@ def load_data(sc='mms1', instr='fgm', mode='srvy', level='l2',
     # Check the inputs
     check_spacecraft(sc)
     mode = check_mode(mode, level=level)
-    check_level(level, instr=instr)
+    check_level(level, instr=instr, mode=mode)
     if isinstance(coords, str):
         coords = [coords]
     
@@ -201,7 +206,11 @@ def load_data(sc='mms1', instr='fgm', mode='srvy', level='l2',
     else:
         raise ValueError('Invalid data product {0}. Choose from (b, r)'
                          .format(product))
-    varformat = '_'+product+'_(' + '|'.join(coords) + ')_'
+    
+    if level in ('l2pre', 'l2'):
+        varformat = '_'+product+'_'#+'(' + '|'.join(coords) + ')_'
+    else:
+        varformat = None
     
     # Load the data
     #   - R is concatenated along Epoch, but depends on Epoch_state
